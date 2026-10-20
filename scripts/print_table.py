@@ -50,6 +50,14 @@ try:
 except ImportError:
     HAS_PSYCOPG2 = False
 
+# Try importing official Supabase Python SDK
+try:
+    from supabase import create_client, Client
+
+    HAS_SUPABASE_SDK = True
+except ImportError:
+    HAS_SUPABASE_SDK = False
+
 # Try importing requests for Supabase REST fallback
 try:
     import requests
@@ -60,6 +68,98 @@ except ImportError:
 
 # Built-in SQLite
 import sqlite3
+import urllib.parse
+
+
+def normalize_pg_dsn(connection_string: Optional[str]) -> Optional[str]:
+    """
+    Sanitize and normalize a PostgreSQL connection string.
+    Handles surrounding quotes, whitespace, missing 'postgresql://' prefixes,
+    unescaped special characters in credentials, JDBC formats,
+    and properly appends sslmode for cloud providers.
+    Returns None if the string is empty or a placeholder (e.g. '***').
+    """
+    if not connection_string:
+        return None
+
+    dsn = connection_string.strip()
+    # Strip surrounding single or double quotes
+    while (dsn.startswith('"') and dsn.endswith('"')) or (
+        dsn.startswith("'") and dsn.endswith("'")
+    ):
+        dsn = dsn[1:-1].strip()
+
+    # Reject placeholders or empty strings
+    if not dsn or dsn in ("***", "...", "null", "undefined", "none"):
+        return None
+
+    # Strip jdbc: prefix if present (e.g., jdbc:postgresql://...)
+    if dsn.startswith("jdbc:"):
+        dsn = dsn[5:].strip()
+
+    # Determine if it is key=value style or URI style
+    # Libpq accepts URIs if they start with postgresql:// or postgres://
+    is_uri = dsn.startswith("postgresql://") or dsn.startswith("postgres://")
+
+    if not is_uri:
+        # Check if it looks like key=value (e.g. 'host=... dbname=...')
+        # A key=value string typically contains '=' in its first segment
+        first_segment = dsn.split("/")[0] if "/" in dsn else dsn
+        if "=" not in first_segment:
+            # It's a URI missing protocol prefix (e.g. db.xxx.supabase.co:5432/postgres or user:pass@host/db)
+            dsn = f"postgresql://{dsn}"
+            is_uri = True
+
+    # If it is a URI, escape any raw special characters in the password
+    if is_uri and "://" in dsn and "@" in dsn:
+        scheme, rest = dsn.split("://", 1)
+        userinfo, hostpath = rest.rsplit("@", 1)
+        if ":" in userinfo:
+            user, pwd = userinfo.split(":", 1)
+            pwd_quoted = urllib.parse.quote(urllib.parse.unquote(pwd), safe="")
+            dsn = f"{scheme}://{user}:{pwd_quoted}@{hostpath}"
+
+    # SSL mode handling for cloud databases (Supabase, Neon, AWS RDS, CockroachDB, etc.)
+    cloud_keywords = (
+        "supabase.co",
+        "supabase.com",
+        "neon.tech",
+        "pooler.supabase.com",
+        "aws.com",
+        "cockroachlabs.cloud",
+    )
+    if any(k in dsn for k in cloud_keywords) and "sslmode=" not in dsn:
+        if is_uri:
+            separator = "&" if "?" in dsn else "?"
+            dsn = f"{dsn}{separator}sslmode=require"
+        else:
+            dsn = f"{dsn} sslmode=require"
+
+    return dsn
+
+
+def mask_connection_string(dsn: str) -> str:
+    """Mask password or credentials in a connection string for safe logging."""
+    if not dsn:
+        return ""
+    # URI pattern: postgresql://user:password@host
+    masked = re.sub(r"://([^:]+):([^@]+)@", r"://\1:****@", dsn)
+    # Key-value pattern: password=secret
+    masked = re.sub(r"(password\s*=\s*)([^\s]+)", r"\1****", masked)
+    return masked
+
+
+def extract_supabase_url_from_dsn(dsn: Optional[str]) -> Optional[str]:
+    """Extract Supabase HTTPS Project URL from a PostgreSQL DSN or pooler string."""
+    if not dsn:
+        return None
+    m = re.search(r"db\.([a-z0-9]+)\.supabase\.co", dsn)
+    if m:
+        return f"https://{m.group(1)}.supabase.co"
+    m = re.search(r"postgres\.([a-z0-9]+)[:@]", dsn)
+    if m:
+        return f"https://{m.group(1)}.supabase.co"
+    return None
 
 
 def is_valid_identifier(name: str) -> bool:
@@ -153,16 +253,9 @@ def query_postgresql(
             "psycopg2 is not installed. Please run: pip install psycopg2-binary"
         )
 
-    # Ensure sslmode for cloud databases if not already present
-    dsn = connection_string
-    if (
-        ("supabase.co" in dsn or "neon.tech" in dsn or "aws.com" in dsn)
-        and "sslmode=" not in dsn
-    ):
-        separator = "&" if "?" in dsn else "?"
-        dsn = f"{dsn}{separator}sslmode=require"
+    dsn = normalize_pg_dsn(connection_string) or connection_string
 
-    conn = psycopg2.connect(dsn)
+    conn = psycopg2.connect(dsn, connect_timeout=10)
     try:
         with conn.cursor() as cur:
             # Build safe query
@@ -192,6 +285,42 @@ def query_postgresql(
             return headers, rows
     finally:
         conn.close()
+
+
+def query_supabase_sdk(
+    supabase_url: str,
+    supabase_key: str,
+    table: str,
+    columns: List[str],
+    limit: int,
+    order_by: Optional[str] = None,
+) -> Tuple[List[str], List[List[Any]]]:
+    """Query Supabase using the official Supabase Python SDK."""
+    if not HAS_SUPABASE_SDK:
+        raise RuntimeError(
+            "The official 'supabase' package is not installed. Please run: pip install supabase"
+        )
+
+    client: Client = create_client(supabase_url, supabase_key)
+    cols_str = ",".join(columns) if columns != ["*"] else "*"
+    query = client.table(table).select(cols_str)
+
+    if order_by:
+        parts = order_by.split()
+        col = parts[0]
+        desc = len(parts) > 1 and parts[1].lower() == "desc"
+        query = query.order(col, desc=desc)
+
+    query = query.limit(limit)
+    response = query.execute()
+
+    data = response.data
+    if not data:
+        return (columns if columns != ["*"] else ["id"]), []
+
+    headers_list = list(data[0].keys())
+    rows = [[item.get(h) for h in headers_list] for item in data]
+    return headers_list, rows
 
 
 def query_supabase_rest(
@@ -325,6 +454,22 @@ def main() -> None:
         help="PostgreSQL connection string (or $DATABASE_URL / $SUPABASE_DATABASE_URL)",
     )
     parser.add_argument(
+        "--supabase-url",
+        default=os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL"),
+        help="Supabase Project URL (or $SUPABASE_URL / $NEXT_PUBLIC_SUPABASE_URL)",
+    )
+    parser.add_argument(
+        "--supabase-key",
+        default=(
+            os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+            or os.getenv("SUPABASE_ANON_KEY")
+            or os.getenv("SUPABASE_PUBLISHABLE_KEY")
+            or os.getenv("SUPABASE_PUBBLISHABLE_KEY")
+            or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+        ),
+        help="Supabase API key (or $SUPABASE_SERVICE_ROLE_KEY / $SUPABASE_ANON_KEY)",
+    )
+    parser.add_argument(
         "--sqlite",
         default=os.getenv("SQLITE_DB"),
         help="Path to SQLite database file (or $SQLITE_DB)",
@@ -400,15 +545,62 @@ def main() -> None:
             print(f"[-] SQLite query failed: {e}", file=sys.stderr)
             sys.exit(1)
 
-    # Mode 3: Direct PostgreSQL Connection
-    db_url = args.db_url
-    if db_url:
-        masked_url = re.sub(r"://([^:]+):([^@]+)@", r"://\1:****@", db_url)
+    # Mode 3: Supabase Python SDK (or REST fallback)
+    supabase_url = args.supabase_url or extract_supabase_url_from_dsn(args.db_url)
+    supabase_key = args.supabase_key
+
+    if supabase_url and supabase_key:
+        supabase_url = supabase_url.strip().strip('"').strip("'")
+        supabase_key = supabase_key.strip().strip('"').strip("'")
+        if (
+            supabase_url
+            and supabase_url not in ("***", "...", "null", "undefined")
+            and supabase_key
+            and supabase_key not in ("***", "...", "null", "undefined")
+        ):
+            client_type = "Supabase SDK" if HAS_SUPABASE_SDK else "Supabase REST API (fallback)"
+            print(f" • Source    : {client_type} ({supabase_url})")
+            print("=" * 70)
+            try:
+                if HAS_SUPABASE_SDK:
+                    headers, rows = query_supabase_sdk(
+                        supabase_url=supabase_url,
+                        supabase_key=supabase_key,
+                        table=args.table,
+                        columns=cols,
+                        limit=args.limit,
+                        order_by=args.order_by,
+                    )
+                else:
+                    headers, rows = query_supabase_rest(
+                        supabase_url=supabase_url,
+                        supabase_key=supabase_key,
+                        table=args.table,
+                        columns=cols,
+                        limit=args.limit,
+                        order_by=args.order_by,
+                    )
+                if not rows:
+                    print(f"\n[i] Table '{args.table}' is currently empty (0 rows).\n")
+                else:
+                    print_formatted_data(headers, rows, fmt=args.format, max_col_width=args.max_col_width)
+                    print(f"\n✔ Total rows fetched: {len(rows)}\n")
+                return
+            except Exception as e:
+                print(f"[!] Supabase query failed: {e}", file=sys.stderr)
+                print("[i] Checking for alternative database sources...", file=sys.stderr)
+
+    # Mode 4: Direct PostgreSQL Connection
+    db_url_raw = args.db_url
+    normalized_db_url = normalize_pg_dsn(db_url_raw)
+
+    if normalized_db_url:
+        masked_url = mask_connection_string(normalized_db_url)
         print(f" • Source    : PostgreSQL ({masked_url})")
         print("=" * 70)
         try:
             headers, rows = query_postgresql(
-                connection_string=db_url,
+                connection_string=normalized_db_url,
                 table=args.table,
                 columns=cols,
                 limit=args.limit,
@@ -421,40 +613,14 @@ def main() -> None:
                 print(f"\n✔ Total rows fetched: {len(rows)}\n")
             return
         except Exception as e:
-            print(f"[-] PostgreSQL query failed: {e}", file=sys.stderr)
-            sys.exit(1)
-
-    # Mode 4: Supabase REST API
-    supabase_url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
-    supabase_key = (
-        os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        or os.getenv("SUPABASE_ANON_KEY")
-        or os.getenv("SUPABASE_PUBLISHABLE_KEY")
-        or os.getenv("SUPABASE_PUBBLISHABLE_KEY")
-        or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
-    )
-
-    if supabase_url and supabase_key:
-        print(f" • Source    : Supabase REST API ({supabase_url})")
-        print("=" * 70)
-        try:
-            headers, rows = query_supabase_rest(
-                supabase_url=supabase_url,
-                supabase_key=supabase_key,
-                table=args.table,
-                columns=cols,
-                limit=args.limit,
-                order_by=args.order_by,
-            )
-            if not rows:
-                print(f"\n[i] Table '{args.table}' is currently empty (0 rows).\n")
-            else:
-                print_formatted_data(headers, rows, fmt=args.format, max_col_width=args.max_col_width)
-                print(f"\n✔ Total rows fetched: {len(rows)}\n")
-            return
-        except Exception as e:
-            print(f"[-] Supabase REST query failed: {e}", file=sys.stderr)
-            sys.exit(1)
+            print(f"[!] PostgreSQL query failed: {e}", file=sys.stderr)
+            print("[i] Checking for alternative database sources...", file=sys.stderr)
+    elif db_url_raw and db_url_raw.strip() not in ("", "***", "...", "null", "undefined"):
+        print(
+            f"[!] Warning: Configured DATABASE_URL is not recognized as a valid PostgreSQL DSN.",
+            file=sys.stderr,
+        )
+        print("[i] Checking for alternative database sources...", file=sys.stderr)
 
     # Mode 5: SQLite Database from environment variable
     sqlite_env = os.getenv("SQLITE_DB")
@@ -476,22 +642,21 @@ def main() -> None:
                 print(f"\n✔ Total rows fetched: {len(rows)}\n")
             return
         except Exception as e:
-            print(f"[-] SQLite query failed: {e}", file=sys.stderr)
-            sys.exit(1)
+            print(f"[!] SQLite query failed: {e}", file=sys.stderr)
 
-    # Fallback when no database credentials are configured
-    print(" • Source    : NO DATABASE CREDENTIALS CONFIGURED")
-    print("=" * 70)
-    print("\n[!] No database connection found in environment or arguments.")
-    print("    To connect your database, set one of the following:")
-    print("      • DATABASE_URL or SUPABASE_DATABASE_URL (for PostgreSQL)")
-    print("      • SUPABASE_URL and SUPABASE_ANON_KEY (for Supabase REST)")
-    print("      • SQLITE_DB or --sqlite <path> (for SQLite)")
-    print("      • Or pass --demo to see sample output.\n")
-    print("Displaying demo table output for preview:")
-    headers, rows = generate_demo_table()
-    print_formatted_data(headers, rows, fmt=args.format, max_col_width=args.max_col_width)
-    print(f"\n✔ Demo rows displayed: {len(rows)}\n")
+    # Fallback when no database credentials worked or are configured
+    print("=" * 70, file=sys.stderr)
+    print("[-] ERROR: Could not retrieve data from any database source.", file=sys.stderr)
+    print("=" * 70, file=sys.stderr)
+    print("Troubleshooting tips:", file=sys.stderr)
+    print("  1. If using PostgreSQL/Supabase direct connection, verify DATABASE_URL is formatted as:", file=sys.stderr)
+    print("     postgresql://postgres:[PASSWORD]@db.[PROJECT-REF].supabase.co:5432/postgres", file=sys.stderr)
+    print("     or (Supabase Connection Pooler):", file=sys.stderr)
+    print("     postgresql://postgres.[PROJECT-REF]:[PASSWORD]@aws-0-[REGION].pooler.supabase.com:6543/postgres", file=sys.stderr)
+    print("     (Make sure there are NO leading/trailing spaces or surrounding quotes in GitHub Secrets).", file=sys.stderr)
+    print("  2. If using Supabase REST API, set both SUPABASE_URL and SUPABASE_ANON_KEY (or SUPABASE_SERVICE_ROLE_KEY).", file=sys.stderr)
+    print("  3. For local or offline testing, run with the --demo flag.\n", file=sys.stderr)
+    sys.exit(1)
 
 
 if __name__ == "__main__":

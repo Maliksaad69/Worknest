@@ -53,13 +53,9 @@ jobs:
 
       - name: Run Table Printer Script
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL || secrets.NEXT_PUBLIC_SUPABASE_URL || 'https://mojslipqlkprjsmpvody.supabase.co' }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY || secrets.SUPABASE_ANON_KEY || secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY || secrets.SUPABASE_SERVICE_ROLE_KEY || secrets.SUPABASE_PUBLISHABLE_KEY }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY || secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY || secrets.SUPABASE_PUBLISHABLE_KEY }}
           TABLE_NAME: ${{ github.event.inputs.table || 'users' }}
-          TABLE_LIMIT: ${{ github.event.inputs.limit || '50' }}
-          OUTPUT_FORMAT: ${{ github.event.inputs.format || 'grid' }}
         run: |
-          python scripts/print_table.py --table "${TABLE_NAME}" --limit "${TABLE_LIMIT}" --format "${OUTPUT_FORMAT}"
+          python scripts/print_users.py
