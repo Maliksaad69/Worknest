@@ -1,0 +1,65 @@
+name: Daily Database Table Report
+
+'on':
+  schedule:
+    # Runs daily at 00:00 UTC (Midnight)
+    - cron: '0 0 * * *'
+  # Enables manual execution via GitHub Actions tab
+  workflow_dispatch:
+    inputs:
+      table:
+        description: 'Table name to print'
+        required: false
+        default: 'users'
+        type: string
+      limit:
+        description: 'Maximum rows to fetch'
+        required: false
+        default: '50'
+        type: string
+      format:
+        description: 'Table output style'
+        required: false
+        default: 'grid'
+        type: choice
+        options:
+          - grid
+          - github
+          - psql
+          - simple
+          - json
+          - csv
+
+jobs:
+  print-table:
+    name: Print Database Table
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Table Printer Script
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TABLE_NAME: ${{ github.event.inputs.table || 'users' }}
+          TABLE_LIMIT: ${{ github.event.inputs.limit || '50' }}
+          OUTPUT_FORMAT: ${{ github.event.inputs.format || 'grid' }}
+        run: |
+          python scripts/print_table.py --table "${TABLE_NAME}" --limit "${TABLE_LIMIT}" --format "${OUTPUT_FORMAT}"

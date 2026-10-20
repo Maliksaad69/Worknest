@@ -1,0 +1,27 @@
+[
+  {
+    "path": "/",
+    "label": "Projects",
+    "description": "Default landing page showing active projects overview, metrics, search, filtering, and project list"
+  },
+  {
+    "path": "/projects/:id",
+    "label": "Project Detail",
+    "description": "Comprehensive project details, client metadata, task checklist, financial progress, and linked records"
+  },
+  {
+    "path": "/outsourced",
+    "label": "Outsourced Work",
+    "description": "Delivery partner assignments linked directly to client projects with payment and deadline tracking"
+  },
+  {
+    "path": "/receivables",
+    "label": "Receivables",
+    "description": "Linked client invoicing and cash flow management with quick payment recording"
+  },
+  {
+    "path": "/tools",
+    "label": "Tools",
+    "description": "Credentials vault, reusable script library, and USD/PKR profit margin calculator"
+  }
+]
