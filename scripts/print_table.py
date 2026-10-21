@@ -394,17 +394,68 @@ def query_sqlite(
         conn.close()
 
 
-def generate_demo_table() -> Tuple[List[str], List[List[Any]]]:
-    """Return a demo sample table for dry-runs or initial testing."""
-    headers = ["id", "name", "role", "email", "status", "last_active"]
-    rows = [
-        [1, "Ada Lovelace", "admin", "ada@example.com", "active", "2026-10-20 09:15:00"],
-        [2, "Alan Turing", "member", "alan@example.com", "active", "2026-10-20 14:30:22"],
-        [3, "Grace Hopper", "admin", "grace@example.com", "active", "2026-10-21 00:01:10"],
-        [4, "Claude Shannon", "guest", "claude@example.com", "idle", "2026-10-18 18:42:05"],
-        [5, "Margaret Hamilton", "admin", "margaret@example.com", "active", "2026-10-20 22:11:45"],
-    ]
-    return headers, rows
+def generate_demo_table(table_name: str = "users") -> Tuple[List[str], List[List[Any]]]:
+    """Return a demo sample table for dry-runs or initial testing matching the normalized schema."""
+    tbl = table_name.lower().strip()
+    if tbl == "projects":
+        headers = ["id", "name", "client", "status", "priority", "amount", "received", "outsourced", "deadline"]
+        rows = [
+            ["p1", "Atlas Commerce", "Northstar Labs", "In Progress", "High", 4200.0, 2100.0, True, "2026-11-04"],
+            ["p2", "Lumen Launch", "Lumen Studio", "Waiting", "Medium", 1800.0, 1800.0, False, "2026-10-31"],
+            ["p3", "Harbor Ops", "Pacific Fleet", "In Progress", "Urgent", 6500.0, 3000.0, True, "2026-11-15"],
+            ["p4", "Orchard Retainer", "Orchard Health", "Completed", "Low", 2200.0, 2200.0, False, "2026-10-15"],
+        ]
+        return headers, rows
+    elif tbl == "tasks":
+        headers = ["id", "projectId", "label", "done", "position"]
+        rows = [
+            ["t1", "p1", "Finalize checkout flow UX", True, 0],
+            ["t2", "p1", "Integrate payment gateway webhooks", False, 1],
+            ["t3", "p2", "Prepare server staging deployment", True, 0],
+            ["t4", "p3", "Configure Redis cluster caching", False, 0],
+        ]
+        return headers, rows
+    elif tbl in ("outsources", "outsource"):
+        headers = ["id", "projectId", "provider", "cost", "paid", "status", "deadline"]
+        rows = [
+            ["o1", "p1", "John Malik (Creative)", 1400.0, 900.0, "In Progress", "2026-11-02"],
+            ["o2", "p3", "DevOps Cloud Pros", 2000.0, 2000.0, "Completed", "2026-10-20"],
+        ]
+        return headers, rows
+    elif tbl in ("receivables", "receivable"):
+        headers = ["id", "projectId", "received", "dueDate", "status", "notes"]
+        rows = [
+            ["r1", "p1", 2100.0, "2026-11-04", "Partially Paid", "Milestone 1 completed"],
+            ["r2", "p2", 1800.0, "2026-10-31", "Paid", "Paid in full upfront"],
+            ["r3", "p3", 3000.0, "2026-11-15", "Partially Paid", "Deposit cleared"],
+        ]
+        return headers, rows
+    elif tbl in ("credentials", "credential"):
+        headers = ["id", "service", "projectId", "username", "url"]
+        rows = [
+            ["c1", "AWS Production Bastion", "p1", "ec2-user", "https://aws.amazon.com"],
+            ["c2", "Supabase Database Console", "p2", "admin@worknest.dev", "https://app.supabase.com"],
+            ["c3", "Cloudflare DNS Dashboard", "p3", "ops@pacificfleet.com", "https://dash.cloudflare.com"],
+        ]
+        return headers, rows
+    elif tbl in ("scripts", "script"):
+        headers = ["id", "name", "category", "description", "projectId"]
+        rows = [
+            ["s1", "Deploy Canary Container", "Docker", "Runs canary build via docker compose", "p1"],
+            ["s2", "Flush Redis Cache", "DevOps", "Clears Redis instance without restarting", "p3"],
+            ["s3", "Database Backup Dump", "Database", "Daily pg_dump snapshot script", "p2"],
+        ]
+        return headers, rows
+    else:
+        headers = ["id", "name", "role", "email", "status", "last_active"]
+        rows = [
+            [1, "Ada Lovelace", "admin", "ada@example.com", "active", "2026-10-20 09:15:00"],
+            [2, "Alan Turing", "member", "alan@example.com", "active", "2026-10-20 14:30:22"],
+            [3, "Grace Hopper", "admin", "grace@example.com", "active", "2026-10-21 00:01:10"],
+            [4, "Claude Shannon", "guest", "claude@example.com", "idle", "2026-10-18 18:42:05"],
+            [5, "Margaret Hamilton", "admin", "margaret@example.com", "active", "2026-10-20 22:11:45"],
+        ]
+        return headers, rows
 
 
 def main() -> None:
@@ -518,7 +569,7 @@ def main() -> None:
     if args.demo:
         print(" • Mode      : DEMO / SAMPLE DATA")
         print("=" * 70)
-        headers, rows = generate_demo_table()
+        headers, rows = generate_demo_table(args.table)
         print_formatted_data(headers, rows, fmt=args.format, max_col_width=args.max_col_width)
         print(f"\n✔ Total rows displayed: {len(rows)}\n")
         return

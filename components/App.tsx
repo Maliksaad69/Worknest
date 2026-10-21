@@ -13,22 +13,23 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { trpc } from "./lib/trpc";
 import { evaluateExpression } from "@/lib/math";
+import type {
+  ProjectStatus,
+  Priority,
+  OutsourceStatus,
+  ReceivableStatus,
+  ToolTab,
+  Task,
+  Project,
+  OutsourcePayment,
+  Outsource,
+  Receivable,
+  Credential,
+  Script,
+  Store,
+  DrawerKind,
+} from "@/shared/types";
 import "./index.css";
-
-type ProjectStatus = "New" | "In Progress" | "Waiting" | "Completed" | "Cancelled";
-type Priority = "Low" | "Medium" | "High" | "Urgent";
-type OutsourceStatus = "Not Started" | "Assigned" | "In Progress" | "Submitted" | "Revision Required" | "Completed" | "Cancelled";
-type ReceivableStatus = "Unpaid" | "Partially Paid" | "Paid" | "Overdue";
-type ToolTab = "credentials" | "scripts" | "calculator" | "amounts";
-type Task = { id: string; label: string; done: boolean };
-type Project = { id: string; name: string; client: string; contact: string; description: string; start: string; deadline: string; status: ProjectStatus; priority: Priority; amount: number; received: number; outsourced: boolean; outsourcedTo?: string; notes: string; tasks: Task[] };
-type OutsourcePayment = { id: string; amount: number; date: string; note?: string };
-type Outsource = { id: string; projectId: string; provider: string; contact: string; description: string; cost: number; paid: number; deadline?: string; status: OutsourceStatus; notes: string; payDate?: string; paidAt?: string; payments?: OutsourcePayment[] };
-type Receivable = { id: string; projectId: string; received: number; dueDate: string; status: ReceivableStatus; notes: string };
-type Credential = { id: string; service: string; projectId: string; username: string; password: string; url: string; notes: string };
-type Script = { id: string; name: string; category: string; description: string; code: string; tags: string[]; projectId: string; notes: string };
-type Store = { projects: Project[]; outsources: Outsource[]; receivables: Receivable[]; credentials: Credential[]; scripts: Script[] };
-type DrawerKind = "project" | "outsource" | "receivable" | "credential" | "script" | "payment";
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const money = (value: number, compact = false) => {
