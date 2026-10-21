@@ -10,7 +10,7 @@ Designed for automated daily cron jobs (e.g. GitHub Actions) or local CLI use.
 Usage:
     python scripts/print_table.py
     python scripts/print_table.py --table users --limit 20
-    python scripts/print_table.py --table worknest_state --format github
+    python scripts/print_table.py --table projects --format github
     python scripts/print_table.py --demo
 """
 

@@ -1,5 +1,10 @@
--- Worknest Initial Schema & Supabase Configuration Migration
+-- ==============================================================================
+-- Worknest Normalized Relational Schema & Migration
+-- ==============================================================================
 -- Run this migration in your Supabase SQL Editor or via Supabase CLI.
+-- This replaces the single-row JSON anti-pattern with individual normalized tables,
+-- foreign keys, cascading deletions, join indexes, and RLS policies.
+-- ==============================================================================
 
 -- 1. Create custom enum types safely
 DO $$ BEGIN
@@ -21,271 +26,304 @@ CREATE TABLE IF NOT EXISTS "public"."users" (
   "lastSignedIn" timestamp with time zone DEFAULT now() NOT NULL
 );
 
--- 3. Worknest Workspace State table (persisting projects, outsourced work, receivables, tools)
-CREATE TABLE IF NOT EXISTS "public"."worknest_state" (
+-- 3. Projects table (primary projects entity)
+CREATE TABLE IF NOT EXISTS "public"."projects" (
   "id" varchar(64) PRIMARY KEY NOT NULL,
-  "data" jsonb NOT NULL,
+  "name" text NOT NULL,
+  "client" text DEFAULT '' NOT NULL,
+  "contact" text DEFAULT '' NOT NULL,
+  "description" text DEFAULT '' NOT NULL,
+  "start" varchar(32) DEFAULT '' NOT NULL,
+  "deadline" varchar(32) DEFAULT '' NOT NULL,
+  "status" varchar(32) DEFAULT 'New' NOT NULL,
+  "priority" varchar(32) DEFAULT 'Medium' NOT NULL,
+  "amount" double precision DEFAULT 0 NOT NULL,
+  "received" double precision DEFAULT 0 NOT NULL,
+  "outsourced" boolean DEFAULT false NOT NULL,
+  "outsourcedTo" text,
+  "notes" text DEFAULT '' NOT NULL,
+  "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
   "updatedAt" timestamp with time zone DEFAULT now() NOT NULL
 );
 
--- 4. Enable Row Level Security (RLS)
+-- 4. Tasks table (tasks belonging to each project, with foreign key)
+CREATE TABLE IF NOT EXISTS "public"."tasks" (
+  "id" varchar(64) PRIMARY KEY NOT NULL,
+  "projectId" varchar(64) NOT NULL REFERENCES "public"."projects"("id") ON DELETE CASCADE,
+  "label" text NOT NULL,
+  "done" boolean DEFAULT false NOT NULL,
+  "position" integer DEFAULT 0 NOT NULL,
+  "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+  "updatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+-- 5. Outsourced work table (partner assignments linked to projects)
+CREATE TABLE IF NOT EXISTS "public"."outsources" (
+  "id" varchar(64) PRIMARY KEY NOT NULL,
+  "projectId" varchar(64) REFERENCES "public"."projects"("id") ON DELETE CASCADE,
+  "provider" text DEFAULT '' NOT NULL,
+  "contact" text DEFAULT '' NOT NULL,
+  "description" text DEFAULT '' NOT NULL,
+  "cost" double precision DEFAULT 0 NOT NULL,
+  "paid" double precision DEFAULT 0 NOT NULL,
+  "deadline" varchar(32),
+  "status" varchar(32) DEFAULT 'Not Started' NOT NULL,
+  "notes" text DEFAULT '' NOT NULL,
+  "payDate" varchar(32),
+  "paidAt" varchar(64),
+  "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+  "updatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+-- 6. Outsource payments table (payment milestones/history for outsourced work)
+CREATE TABLE IF NOT EXISTS "public"."outsource_payments" (
+  "id" varchar(64) PRIMARY KEY NOT NULL,
+  "outsourceId" varchar(64) NOT NULL REFERENCES "public"."outsources"("id") ON DELETE CASCADE,
+  "amount" double precision DEFAULT 0 NOT NULL,
+  "date" varchar(32) DEFAULT '' NOT NULL,
+  "note" text DEFAULT '',
+  "createdAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+-- 7. Receivables table (client payment milestones linked to projects)
+CREATE TABLE IF NOT EXISTS "public"."receivables" (
+  "id" varchar(64) PRIMARY KEY NOT NULL,
+  "projectId" varchar(64) REFERENCES "public"."projects"("id") ON DELETE CASCADE,
+  "received" double precision DEFAULT 0 NOT NULL,
+  "dueDate" varchar(32) DEFAULT '' NOT NULL,
+  "status" varchar(32) DEFAULT 'Unpaid' NOT NULL,
+  "notes" text DEFAULT '' NOT NULL,
+  "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+  "updatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+-- 8. Credentials table (service credentials optionally linked to projects)
+CREATE TABLE IF NOT EXISTS "public"."credentials" (
+  "id" varchar(64) PRIMARY KEY NOT NULL,
+  "service" text DEFAULT '' NOT NULL,
+  "projectId" varchar(64) REFERENCES "public"."projects"("id") ON DELETE CASCADE,
+  "username" text DEFAULT '' NOT NULL,
+  "password" text DEFAULT '' NOT NULL,
+  "url" text DEFAULT '' NOT NULL,
+  "notes" text DEFAULT '' NOT NULL,
+  "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+  "updatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+-- 9. Scripts table (technical scripts optionally linked to projects)
+CREATE TABLE IF NOT EXISTS "public"."scripts" (
+  "id" varchar(64) PRIMARY KEY NOT NULL,
+  "name" text DEFAULT '' NOT NULL,
+  "category" text DEFAULT '' NOT NULL,
+  "description" text DEFAULT '' NOT NULL,
+  "code" text DEFAULT '' NOT NULL,
+  "tags" jsonb DEFAULT '[]'::jsonb NOT NULL,
+  "projectId" varchar(64) REFERENCES "public"."projects"("id") ON DELETE CASCADE,
+  "notes" text DEFAULT '' NOT NULL,
+  "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+  "updatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+-- 10. Performance Indexes for Foreign Key Joins
+CREATE INDEX IF NOT EXISTS "idx_tasks_project_id" ON "public"."tasks"("projectId");
+CREATE INDEX IF NOT EXISTS "idx_outsources_project_id" ON "public"."outsources"("projectId");
+CREATE INDEX IF NOT EXISTS "idx_outsource_payments_outsource_id" ON "public"."outsource_payments"("outsourceId");
+CREATE INDEX IF NOT EXISTS "idx_receivables_project_id" ON "public"."receivables"("projectId");
+CREATE INDEX IF NOT EXISTS "idx_credentials_project_id" ON "public"."credentials"("projectId");
+CREATE INDEX IF NOT EXISTS "idx_scripts_project_id" ON "public"."scripts"("projectId");
+
+-- 11. Migrate Existing Data from legacy worknest_state (if table exists)
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'worknest_state') THEN
+    -- Migrate projects
+    INSERT INTO "public"."projects" (
+      "id", "name", "client", "contact", "description", "start", "deadline",
+      "status", "priority", "amount", "received", "outsourced", "outsourcedTo", "notes", "createdAt", "updatedAt"
+    )
+    SELECT
+      p->>'id' AS "id",
+      COALESCE(p->>'name', 'Untitled Project') AS "name",
+      COALESCE(p->>'client', '') AS "client",
+      COALESCE(p->>'contact', '') AS "contact",
+      COALESCE(p->>'description', '') AS "description",
+      COALESCE(p->>'start', '') AS "start",
+      COALESCE(p->>'deadline', '') AS "deadline",
+      COALESCE(p->>'status', 'New') AS "status",
+      COALESCE(p->>'priority', 'Medium') AS "priority",
+      COALESCE((p->>'amount')::double precision, 0) AS "amount",
+      COALESCE((p->>'received')::double precision, 0) AS "received",
+      COALESCE((p->>'outsourced')::boolean, false) AS "outsourced",
+      p->>'outsourcedTo' AS "outsourcedTo",
+      COALESCE(p->>'notes', '') AS "notes",
+      now(),
+      now()
+    FROM "public"."worknest_state" w,
+         jsonb_array_elements(CASE WHEN jsonb_typeof(w.data->'projects') = 'array' THEN w.data->'projects' ELSE '[]'::jsonb END) p
+    WHERE p->>'id' IS NOT NULL
+    ON CONFLICT ("id") DO NOTHING;
+
+    -- Migrate tasks from projects
+    INSERT INTO "public"."tasks" ("id", "projectId", "label", "done", "position", "createdAt", "updatedAt")
+    SELECT
+      COALESCE(t->>'id', gen_random_uuid()::text) AS "id",
+      p->>'id' AS "projectId",
+      COALESCE(t->>'label', '') AS "label",
+      COALESCE((t->>'done')::boolean, false) AS "done",
+      COALESCE((t->>'position')::integer, row_number() OVER (PARTITION BY p->>'id')) AS "position",
+      now(),
+      now()
+    FROM "public"."worknest_state" w,
+         jsonb_array_elements(CASE WHEN jsonb_typeof(w.data->'projects') = 'array' THEN w.data->'projects' ELSE '[]'::jsonb END) p,
+         jsonb_array_elements(CASE WHEN jsonb_typeof(p->'tasks') = 'array' THEN p->'tasks' ELSE '[]'::jsonb END) t
+    WHERE p->>'id' IS NOT NULL
+    ON CONFLICT ("id") DO NOTHING;
+
+    -- Migrate outsources
+    INSERT INTO "public"."outsources" (
+      "id", "projectId", "provider", "contact", "description",
+      "cost", "paid", "deadline", "status", "notes", "payDate", "paidAt", "createdAt", "updatedAt"
+    )
+    SELECT
+      o->>'id' AS "id",
+      CASE WHEN NULLIF(o->>'projectId', '') IN (SELECT "id" FROM "public"."projects") THEN NULLIF(o->>'projectId', '') ELSE NULL END AS "projectId",
+      COALESCE(o->>'provider', '') AS "provider",
+      COALESCE(o->>'contact', '') AS "contact",
+      COALESCE(o->>'description', '') AS "description",
+      COALESCE((o->>'cost')::double precision, 0) AS "cost",
+      COALESCE((o->>'paid')::double precision, 0) AS "paid",
+      o->>'deadline' AS "deadline",
+      COALESCE(o->>'status', 'Not Started') AS "status",
+      COALESCE(o->>'notes', '') AS "notes",
+      o->>'payDate' AS "payDate",
+      o->>'paidAt' AS "paidAt",
+      now(),
+      now()
+    FROM "public"."worknest_state" w,
+         jsonb_array_elements(CASE WHEN jsonb_typeof(w.data->'outsources') = 'array' THEN w.data->'outsources' ELSE '[]'::jsonb END) o
+    WHERE o->>'id' IS NOT NULL
+    ON CONFLICT ("id") DO NOTHING;
+
+    -- Migrate outsource payments
+    INSERT INTO "public"."outsource_payments" ("id", "outsourceId", "amount", "date", "note", "createdAt")
+    SELECT
+      COALESCE(pm->>'id', gen_random_uuid()::text) AS "id",
+      o->>'id' AS "outsourceId",
+      COALESCE((pm->>'amount')::double precision, 0) AS "amount",
+      COALESCE(pm->>'date', '') AS "date",
+      COALESCE(pm->>'note', '') AS "note",
+      now()
+    FROM "public"."worknest_state" w,
+         jsonb_array_elements(CASE WHEN jsonb_typeof(w.data->'outsources') = 'array' THEN w.data->'outsources' ELSE '[]'::jsonb END) o,
+         jsonb_array_elements(CASE WHEN jsonb_typeof(o->'payments') = 'array' THEN o->'payments' ELSE '[]'::jsonb END) pm
+    WHERE o->>'id' IN (SELECT "id" FROM "public"."outsources")
+    ON CONFLICT ("id") DO NOTHING;
+
+    -- Migrate receivables
+    INSERT INTO "public"."receivables" ("id", "projectId", "received", "dueDate", "status", "notes", "createdAt", "updatedAt")
+    SELECT
+      r->>'id' AS "id",
+      CASE WHEN NULLIF(r->>'projectId', '') IN (SELECT "id" FROM "public"."projects") THEN NULLIF(r->>'projectId', '') ELSE NULL END AS "projectId",
+      COALESCE((r->>'received')::double precision, 0) AS "received",
+      COALESCE(r->>'dueDate', '') AS "dueDate",
+      COALESCE(r->>'status', 'Unpaid') AS "status",
+      COALESCE(r->>'notes', '') AS "notes",
+      now(),
+      now()
+    FROM "public"."worknest_state" w,
+         jsonb_array_elements(CASE WHEN jsonb_typeof(w.data->'receivables') = 'array' THEN w.data->'receivables' ELSE '[]'::jsonb END) r
+    WHERE r->>'id' IS NOT NULL
+    ON CONFLICT ("id") DO NOTHING;
+
+    -- Migrate credentials
+    INSERT INTO "public"."credentials" ("id", "service", "projectId", "username", "password", "url", "notes", "createdAt", "updatedAt")
+    SELECT
+      c->>'id' AS "id",
+      COALESCE(c->>'service', '') AS "service",
+      CASE WHEN NULLIF(c->>'projectId', '') IN (SELECT "id" FROM "public"."projects") THEN NULLIF(c->>'projectId', '') ELSE NULL END AS "projectId",
+      COALESCE(c->>'username', '') AS "username",
+      COALESCE(c->>'password', '') AS "password",
+      COALESCE(c->>'url', '') AS "url",
+      COALESCE(c->>'notes', '') AS "notes",
+      now(),
+      now()
+    FROM "public"."worknest_state" w,
+         jsonb_array_elements(CASE WHEN jsonb_typeof(w.data->'credentials') = 'array' THEN w.data->'credentials' ELSE '[]'::jsonb END) c
+    WHERE c->>'id' IS NOT NULL
+    ON CONFLICT ("id") DO NOTHING;
+
+    -- Migrate scripts
+    INSERT INTO "public"."scripts" ("id", "name", "category", "description", "code", "tags", "projectId", "notes", "createdAt", "updatedAt")
+    SELECT
+      s->>'id' AS "id",
+      COALESCE(s->>'name', '') AS "name",
+      COALESCE(s->>'category', '') AS "category",
+      COALESCE(s->>'description', '') AS "description",
+      COALESCE(s->>'code', '') AS "code",
+      COALESCE(s->'tags', '[]'::jsonb) AS "tags",
+      CASE WHEN NULLIF(s->>'projectId', '') IN (SELECT "id" FROM "public"."projects") THEN NULLIF(s->>'projectId', '') ELSE NULL END AS "projectId",
+      COALESCE(s->>'notes', '') AS "notes",
+      now(),
+      now()
+    FROM "public"."worknest_state" w,
+         jsonb_array_elements(CASE WHEN jsonb_typeof(w.data->'scripts') = 'array' THEN w.data->'scripts' ELSE '[]'::jsonb END) s
+    WHERE s->>'id' IS NOT NULL
+    ON CONFLICT ("id") DO NOTHING;
+
+    -- Drop legacy worknest_state table now that data is migrated into individual tables
+    DROP TABLE IF EXISTS "public"."worknest_state" CASCADE;
+  END IF;
+END $$;
+
+-- 12. Enable Row Level Security (RLS) on all tables
 ALTER TABLE "public"."users" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "public"."worknest_state" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."projects" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."tasks" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."outsources" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."outsource_payments" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."receivables" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."credentials" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."scripts" ENABLE ROW LEVEL SECURITY;
 
--- 5. Set up RLS Policies for worknest_state
--- Allow read access to anon and authenticated clients
-DROP POLICY IF EXISTS "Allow anon and auth read on worknest_state" ON "public"."worknest_state";
-CREATE POLICY "Allow anon and auth read on worknest_state"
-  ON "public"."worknest_state"
-  FOR SELECT
-  TO anon, authenticated
-  USING (true);
+-- 13. Create RLS Policies for Anon and Authenticated Access
+DO $$
+DECLARE
+  tbl text;
+BEGIN
+  FOR tbl IN
+    SELECT unnest(ARRAY[
+      'users',
+      'projects',
+      'tasks',
+      'outsources',
+      'outsource_payments',
+      'receivables',
+      'credentials',
+      'scripts'
+    ])
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS "Allow anon and auth read on %I" ON "public".%I;', tbl, tbl);
+    EXECUTE format('CREATE POLICY "Allow anon and auth read on %I" ON "public".%I FOR SELECT TO anon, authenticated USING (true);', tbl, tbl);
 
--- Allow insert/write access
-DROP POLICY IF EXISTS "Allow anon and auth insert on worknest_state" ON "public"."worknest_state";
-CREATE POLICY "Allow anon and auth insert on worknest_state"
-  ON "public"."worknest_state"
-  FOR INSERT
-  TO anon, authenticated
-  WITH CHECK (true);
+    EXECUTE format('DROP POLICY IF EXISTS "Allow anon and auth insert on %I" ON "public".%I;', tbl, tbl);
+    EXECUTE format('CREATE POLICY "Allow anon and auth insert on %I" ON "public".%I FOR INSERT TO anon, authenticated WITH CHECK (true);', tbl, tbl);
 
--- Allow update access
-DROP POLICY IF EXISTS "Allow anon and auth update on worknest_state" ON "public"."worknest_state";
-CREATE POLICY "Allow anon and auth update on worknest_state"
-  ON "public"."worknest_state"
-  FOR UPDATE
-  TO anon, authenticated
-  USING (true)
-  WITH CHECK (true);
+    EXECUTE format('DROP POLICY IF EXISTS "Allow anon and auth update on %I" ON "public".%I;', tbl, tbl);
+    EXECUTE format('CREATE POLICY "Allow anon and auth update on %I" ON "public".%I FOR UPDATE TO anon, authenticated USING (true) WITH CHECK (true);', tbl, tbl);
 
--- Allow delete access
-DROP POLICY IF EXISTS "Allow anon and auth delete on worknest_state" ON "public"."worknest_state";
-CREATE POLICY "Allow anon and auth delete on worknest_state"
-  ON "public"."worknest_state"
-  FOR DELETE
-  TO anon, authenticated
-  USING (true);
+    EXECUTE format('DROP POLICY IF EXISTS "Allow anon and auth delete on %I" ON "public".%I;', tbl, tbl);
+    EXECUTE format('CREATE POLICY "Allow anon and auth delete on %I" ON "public".%I FOR DELETE TO anon, authenticated USING (true);', tbl, tbl);
+  END LOOP;
+END $$;
 
--- 6. Set up RLS Policies for users table
-DROP POLICY IF EXISTS "Allow anon and auth read on users" ON "public"."users";
-CREATE POLICY "Allow anon and auth read on users"
-  ON "public"."users"
-  FOR SELECT
-  TO anon, authenticated
-  USING (true);
-
-DROP POLICY IF EXISTS "Allow anon and auth modify on users" ON "public"."users";
-CREATE POLICY "Allow anon and auth modify on users"
-  ON "public"."users"
-  FOR ALL
-  TO anon, authenticated
-  USING (true)
-  WITH CHECK (true);
-
--- 7. Grant Schema & Table Privileges to anon, authenticated, and service_role
+-- 14. Grant Schema & Table Privileges to anon, authenticated, and service_role
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 GRANT ALL ON TABLE "public"."users" TO anon, authenticated, service_role;
-GRANT ALL ON TABLE "public"."worknest_state" TO anon, authenticated, service_role;
+GRANT ALL ON TABLE "public"."projects" TO anon, authenticated, service_role;
+GRANT ALL ON TABLE "public"."tasks" TO anon, authenticated, service_role;
+GRANT ALL ON TABLE "public"."outsources" TO anon, authenticated, service_role;
+GRANT ALL ON TABLE "public"."outsource_payments" TO anon, authenticated, service_role;
+GRANT ALL ON TABLE "public"."receivables" TO anon, authenticated, service_role;
+GRANT ALL ON TABLE "public"."credentials" TO anon, authenticated, service_role;
+GRANT ALL ON TABLE "public"."scripts" TO anon, authenticated, service_role;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
-
--- 8. Seed Default Workspace Snapshot if not already present
-INSERT INTO "public"."worknest_state" ("id", "data", "updatedAt")
-VALUES (
-  'default',
-  '{
-    "projects": [
-      {
-        "id": "p1",
-        "name": "Atlas Commerce",
-        "client": "Northstar Labs",
-        "contact": "Maya Chen · maya@northstar.io",
-        "description": "Rework the commerce dashboard into a clear, faster workspace for the operations team.",
-        "start": "2026-09-02",
-        "deadline": "2026-10-22",
-        "status": "In Progress",
-        "priority": "High",
-        "amount": 4200,
-        "received": 2100,
-        "outsourced": true,
-        "outsourcedTo": "John Malik",
-        "notes": "Weekly review on Thursdays. Keep the reporting surface lightweight.",
-        "tasks": [
-          { "id": "t1", "label": "Approve dashboard structure", "done": true },
-          { "id": "t2", "label": "Finish order management flow", "done": false },
-          { "id": "t3", "label": "QA responsive states", "done": false }
-        ]
-      },
-      {
-        "id": "p2",
-        "name": "Lumen Launch",
-        "client": "Lumen Studio",
-        "contact": "Ava Reed · ava@lumen.studio",
-        "description": "Launch a focused landing page and a small campaign toolkit for the autumn release.",
-        "start": "2026-09-18",
-        "deadline": "2026-10-27",
-        "status": "Waiting",
-        "priority": "Medium",
-        "amount": 1800,
-        "received": 1800,
-        "outsourced": false,
-        "notes": "Waiting on final copy and product photography.",
-        "tasks": [
-          { "id": "t4", "label": "Landing page build", "done": true },
-          { "id": "t5", "label": "Campaign handoff", "done": false }
-        ]
-      },
-      {
-        "id": "p3",
-        "name": "Harbor Ops",
-        "client": "Harbor & Co.",
-        "contact": "Owen Blake · owen@harbor.co",
-        "description": "Automate a weekly operations report and clean up the handoff documentation.",
-        "start": "2026-10-01",
-        "deadline": "2026-11-05",
-        "status": "New",
-        "priority": "Urgent",
-        "amount": 2650,
-        "received": 0,
-        "outsourced": false,
-        "notes": "Kickoff call booked for Monday.",
-        "tasks": [
-          { "id": "t6", "label": "Confirm data sources", "done": false },
-          { "id": "t7", "label": "Draft workflow map", "done": false }
-        ]
-      },
-      {
-        "id": "p4",
-        "name": "Orchard Retainer",
-        "client": "Orchard Health",
-        "contact": "Sam Patel · sam@orchard.health",
-        "description": "Monthly product design and technical support retainer.",
-        "start": "2026-08-01",
-        "deadline": "2026-10-10",
-        "status": "Completed",
-        "priority": "Low",
-        "amount": 3200,
-        "received": 3200,
-        "outsourced": false,
-        "notes": "Archive after final invoice is reconciled.",
-        "tasks": [
-          { "id": "t8", "label": "Close monthly report", "done": true }
-        ]
-      }
-    ],
-    "outsources": [
-      {
-        "id": "o1",
-        "projectId": "p1",
-        "provider": "John Malik",
-        "contact": "john@malik.dev",
-        "description": "Frontend implementation for the order management flow.",
-        "cost": 1400,
-        "paid": 900,
-        "deadline": "2026-10-20",
-        "status": "In Progress",
-        "notes": "Share build every Friday."
-      },
-      {
-        "id": "o2",
-        "projectId": "p4",
-        "provider": "Studio Koi",
-        "contact": "hello@studiokoi.co",
-        "description": "Illustration support for the monthly product report.",
-        "cost": 500,
-        "paid": 500,
-        "deadline": "2026-10-06",
-        "status": "Completed",
-        "notes": "Final assets are in the shared folder."
-      }
-    ],
-    "receivables": [
-      {
-        "id": "r1",
-        "projectId": "p1",
-        "received": 2100,
-        "dueDate": "2026-10-28",
-        "status": "Partially Paid",
-        "notes": "Second milestone invoice sent."
-      },
-      {
-        "id": "r2",
-        "projectId": "p2",
-        "received": 1800,
-        "dueDate": "2026-10-13",
-        "status": "Paid",
-        "notes": "Paid in full."
-      },
-      {
-        "id": "r3",
-        "projectId": "p3",
-        "received": 0,
-        "dueDate": "2026-11-03",
-        "status": "Unpaid",
-        "notes": "Invoice to be issued after kickoff."
-      }
-    ],
-    "credentials": [
-      {
-        "id": "c1",
-        "service": "Northstar staging",
-        "projectId": "p1",
-        "username": "maya@northstar.io",
-        "password": "Atlas-staging-2026",
-        "url": "https://staging.northstar.io",
-        "notes": "Use the staging workspace for QA."
-      },
-      {
-        "id": "c2",
-        "service": "Lumen CMS",
-        "projectId": "p2",
-        "username": "ava@lumen.studio",
-        "password": "LumenLaunch!",
-        "url": "https://cms.lumen.studio",
-        "notes": "Editor access only."
-      },
-      {
-        "id": "c3",
-        "service": "Harbor AWS",
-        "projectId": "p3",
-        "username": "ops@harbor.co",
-        "password": "Harbor-ops-key",
-        "url": "https://console.aws.amazon.com",
-        "notes": "Temporary credentials; rotate after handoff."
-      }
-    ],
-    "scripts": [
-      {
-        "id": "s1",
-        "name": "Tail logs safely",
-        "category": "Linux",
-        "description": "Follow the latest application logs while preserving timestamps.",
-        "code": "journalctl -u app.service -f -n 200 --output=short-iso",
-        "tags": ["logs", "debug"],
-        "projectId": "p1",
-        "notes": "Useful during staged deploys."
-      },
-      {
-        "id": "s2",
-        "name": "Backup Postgres",
-        "category": "Database",
-        "description": "Create a compressed database backup with a timestamped filename.",
-        "code": "pg_dump \"$DATABASE_URL\" | gzip > backup-$(date +%Y%m%d-%H%M).sql.gz",
-        "tags": ["backup", "postgres"],
-        "projectId": "p3",
-        "notes": "Run from the production bastion."
-      },
-      {
-        "id": "s3",
-        "name": "Deploy checklist",
-        "category": "Deployment",
-        "description": "A small preflight reminder for client releases.",
-        "code": "pnpm check && pnpm test && pnpm build\ngit status --short\ngit push origin main",
-        "tags": ["release", "quality"],
-        "projectId": "",
-        "notes": "Keep the release flow boring."
-      }
-    ]
-  }'::jsonb,
-  now()
-)
-ON CONFLICT ("id") DO NOTHING;
