@@ -2923,25 +2923,16 @@ function Drawer({
     {(kind === "receivable" || kind === "payment") && <><Field label={kind === "payment" ? "Payment amount (PKR)" : "Due date"} value={kind === "payment" ? payment : deadline} onChange={value => kind === "payment" ? setPayment(value) : setDeadline(value)} prefix={kind === "payment" ? "₨" : undefined} placeholder={kind === "payment" ? "e.g. =43*277" : undefined} type={kind === "payment" ? "number" : "date"} required />{kind === "receivable" && <div className="amount-preview"><span>Total linked amount</span><strong>{money(selected?.amount || 0)}</strong><small>Auto-populated from project value</small></div>}</>}
     {kind === "credential" && (
       <>
-        <div style={{ marginBottom: "14px" }}>
-          <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "var(--ink)", marginBottom: "6px" }}>
-            Client name <span className="required">*</span>
-          </label>
+        <label className="field cred-client-field">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>Client name <span className="required">*</span></span>
+          </div>
           <input
             list="known-clients-list"
             value={credClient}
             onChange={e => setCredClient(e.target.value)}
             placeholder="e.g. Northstar Labs or General / Shared"
-            style={{
-              width: "100%",
-              height: "38px",
-              border: "1px solid var(--line)",
-              borderRadius: "6px",
-              padding: "0 11px",
-              fontSize: "12px",
-              color: "var(--ink)",
-              background: "#fff",
-            }}
+            className="dark-input"
             required
           />
           <datalist id="known-clients-list">
@@ -2952,7 +2943,7 @@ function Drawer({
           <small style={{ color: "var(--muted)", fontSize: "10px", marginTop: "4px", display: "block" }}>
             Credentials and dynamic keys will be grouped under this client in Tools.
           </small>
-        </div>
+        </label>
 
         <Field
           label="Service / Tool name"
@@ -2977,138 +2968,119 @@ function Drawer({
         />
 
         <div className="drawer-fields-section">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+          <div className="drawer-fields-header">
             <div>
-              <strong style={{ fontSize: "12px", color: "var(--ink)" }}>Dynamic Key-Value Fields</strong>
-              <span style={{ display: "block", fontSize: "10px", color: "var(--muted)" }}>
+              <strong className="drawer-fields-title">Dynamic Key-Value Fields</strong>
+              <span className="drawer-fields-desc">
                 Add multiple keys, secrets, tokens, endpoints, or custom config under this client.
               </span>
             </div>
             <button
               type="button"
-              className="secondary-button"
-              style={{ padding: "0 9px", minHeight: "28px", fontSize: "11px" }}
+              className="secondary-button drawer-add-field-btn"
               onClick={() => setCredFields(curr => [...curr, { id: uid(), key: "", value: "", isSecret: false }])}
             >
               <Plus size={13} /> Add field
             </button>
           </div>
 
-          <div style={{ display: "flex", gap: "5px", flexWrap: "wrap", marginBottom: "12px" }}>
-            <span style={{ fontSize: "10px", color: "var(--muted)", alignSelf: "center" }}>Quick presets:</span>
-            <button
-              type="button"
-              className="quick-key-pill"
-              onClick={() => setCredFields(curr => [
-                ...curr,
-                { id: uid(), key: "API Key", value: "", isSecret: false },
-                { id: uid(), key: "API Secret", value: "", isSecret: true },
-                { id: uid(), key: "API Endpoint", value: "https://", isSecret: false },
-              ])}
-            >
-              + API Preset
-            </button>
-            <button
-              type="button"
-              className="quick-key-pill"
-              onClick={() => setCredFields(curr => [
-                ...curr,
-                { id: uid(), key: "Database Host", value: "", isSecret: false },
-                { id: uid(), key: "DB User", value: "", isSecret: false },
-                { id: uid(), key: "DB Password", value: "", isSecret: true },
-                { id: uid(), key: "Connection String", value: "", isSecret: true },
-              ])}
-            >
-              + DB Preset
-            </button>
-            <button
-              type="button"
-              className="quick-key-pill"
-              onClick={() => setCredFields(curr => [
-                ...curr,
-                { id: uid(), key: "Username / Email", value: "", isSecret: false },
-                { id: uid(), key: "Password", value: "", isSecret: true },
-                { id: uid(), key: "Portal URL", value: "https://", isSecret: false },
-              ])}
-            >
-              + Login Preset
-            </button>
+          <div className="drawer-presets-bar">
+            <span className="drawer-presets-label">Quick presets:</span>
+            <div className="drawer-presets-pills">
+              <button
+                type="button"
+                className="quick-key-pill"
+                onClick={() => setCredFields(curr => [
+                  ...curr,
+                  { id: uid(), key: "API Key", value: "", isSecret: false },
+                  { id: uid(), key: "API Secret", value: "", isSecret: true },
+                  { id: uid(), key: "API Endpoint", value: "https://", isSecret: false },
+                ])}
+              >
+                + API Preset
+              </button>
+              <button
+                type="button"
+                className="quick-key-pill"
+                onClick={() => setCredFields(curr => [
+                  ...curr,
+                  { id: uid(), key: "Database Host", value: "", isSecret: false },
+                  { id: uid(), key: "DB User", value: "", isSecret: false },
+                  { id: uid(), key: "DB Password", value: "", isSecret: true },
+                  { id: uid(), key: "Connection String", value: "", isSecret: true },
+                ])}
+              >
+                + DB Preset
+              </button>
+              <button
+                type="button"
+                className="quick-key-pill"
+                onClick={() => setCredFields(curr => [
+                  ...curr,
+                  { id: uid(), key: "Username / Email", value: "", isSecret: false },
+                  { id: uid(), key: "Password", value: "", isSecret: true },
+                  { id: uid(), key: "Portal URL", value: "https://", isSecret: false },
+                ])}
+              >
+                + Login Preset
+              </button>
+            </div>
           </div>
 
-          <div style={{ display: "grid", gap: "8px" }}>
+          <div className="drawer-fields-list">
             {credFields.map((field, idx) => (
               <div key={field.id} className="drawer-field-row">
                 <input
                   type="text"
-                  placeholder="Key (e.g. API Key)"
+                  placeholder="Key / Field name (e.g. API Key, Secret Token)"
                   value={field.key}
                   onChange={e => {
                     const val = e.target.value;
                     setCredFields(curr => curr.map((f, i) => i === idx ? { ...f, key: val } : f));
                   }}
-                  style={{
-                    height: "36px",
-                    border: "1px solid var(--line)",
-                    borderRadius: "6px",
-                    padding: "0 10px",
-                    fontSize: "12px"
-                  }}
+                  className="drawer-key-input"
                 />
-                <input
-                  type={field.isSecret ? "password" : "text"}
-                  placeholder="Value or secret"
-                  value={field.value}
-                  onChange={e => {
-                    const val = e.target.value;
-                    setCredFields(curr => curr.map((f, i) => i === idx ? { ...f, value: val } : f));
-                  }}
-                  style={{
-                    height: "36px",
-                    border: "1px solid var(--line)",
-                    borderRadius: "6px",
-                    padding: "0 10px",
-                    fontSize: "12px",
-                    fontFamily: field.isSecret ? "monospace" : "inherit"
-                  }}
-                />
-                <button
-                  type="button"
-                  className={`mini-action-btn ${field.isSecret ? "active-secret" : ""}`}
-                  title={field.isSecret ? "Field is masked as Secret" : "Mark as Secret"}
-                  style={{
-                    height: "36px",
-                    padding: "0 8px",
-                    width: "auto",
-                    fontSize: "11px",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "4px",
-                    border: "1px solid var(--line)",
-                    background: field.isSecret ? "#fff7ed" : "#fff",
-                    color: field.isSecret ? "#ea580c" : "var(--muted)",
-                    borderRadius: "6px",
-                    cursor: "pointer"
-                  }}
-                  onClick={() => {
-                    setCredFields(curr => curr.map((f, i) => i === idx ? { ...f, isSecret: !f.isSecret } : f));
-                  }}
-                >
-                  {field.isSecret ? <EyeOff size={13} /> : <Eye size={13} />}
-                  <span>{field.isSecret ? "Secret" : "Plain"}</span>
-                </button>
-                <button
-                  type="button"
-                  className="mini-action-btn delete"
-                  style={{ height: "36px", width: "32px", border: "1px solid var(--line)", borderRadius: "6px" }}
-                  title="Remove field"
-                  onClick={() => {
-                    setCredFields(curr => curr.filter((_, i) => i !== idx));
-                  }}
-                >
-                  <Trash2 size={14} />
-                </button>
+                <div className="drawer-field-bottom-row">
+                  <input
+                    type={field.isSecret ? "password" : "text"}
+                    placeholder="Value or secret"
+                    value={field.value}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setCredFields(curr => curr.map((f, i) => i === idx ? { ...f, value: val } : f));
+                    }}
+                    className={`drawer-val-input ${field.isSecret ? "secret-font" : ""}`}
+                  />
+                  <button
+                    type="button"
+                    className={`drawer-secret-btn ${field.isSecret ? "is-secret" : "is-plain"}`}
+                    title={field.isSecret ? "Field is masked as Secret" : "Mark as Secret"}
+                    onClick={() => {
+                      setCredFields(curr => curr.map((f, i) => i === idx ? { ...f, isSecret: !f.isSecret } : f));
+                    }}
+                  >
+                    {field.isSecret ? <EyeOff size={13} /> : <Eye size={13} />}
+                    <span>{field.isSecret ? "Secret" : "Plain"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="drawer-delete-btn"
+                    title="Remove field"
+                    onClick={() => {
+                      setCredFields(curr => curr.filter((_, i) => i !== idx));
+                    }}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               </div>
             ))}
+            {credFields.length === 0 && (
+              <div className="drawer-fields-empty">
+                <KeyRound size={18} />
+                <span>No fields added yet. Click &ldquo;Add field&rdquo; or pick a quick preset above.</span>
+              </div>
+            )}
           </div>
         </div>
 
