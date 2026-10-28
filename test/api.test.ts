@@ -211,13 +211,27 @@ describe("Native Next.js tRPC Router & Backend", () => {
     });
     expect(createdOutsource.provider).toBe("Cloud DevOps Agency");
 
-    // Add payment to outsource
+    // Add partial payment to outsource with scheduled remaining pay date
+    const partialPayment = await caller.outsources.addPayment({
+      outsourceId: "o_crud_1",
+      amount: 500,
+      note: "Partial payment 1",
+      remainingPayDate: "2026-11-25",
+    });
+    expect(partialPayment.amount).toBe(500);
+
+    const midOutsource = await caller.outsources.getById({ id: "o_crud_1" });
+    expect(midOutsource?.paid).toBe(1500);
+    expect(midOutsource?.payDate).toBe("2026-11-25");
+    expect(midOutsource?.status).toBe("In Progress");
+
+    // Final payout to complete outsource
     const payment = await caller.outsources.addPayment({
       outsourceId: "o_crud_1",
-      amount: 1500,
+      amount: 1000,
       note: "Final delivery milestone",
     });
-    expect(payment.amount).toBe(1500);
+    expect(payment.amount).toBe(1000);
 
     const fetchedOutsource = await caller.outsources.getById({ id: "o_crud_1" });
     expect(fetchedOutsource?.paid).toBe(2500);
@@ -239,19 +253,44 @@ describe("Native Next.js tRPC Router & Backend", () => {
     expect(paymentRec.project.received).toBe(4000);
     expect(paymentRec.receivable.status).toBe("Partially Paid");
 
-    // Credential CRUD
+    // Credential CRUD with dynamic key-value fields and client grouping
     const credential = await caller.credentials.create({
       id: "c_crud_1",
       service: "GitHub Enterprise",
+      client: "Northstar Labs",
       projectId: "p_full_1",
       username: "worknest-ci",
       password: "ghp_secret_token_123",
       url: "https://github.com",
+      fields: [
+        { id: "f_key", key: "API Key", value: "ghp_secret_token_123", isSecret: true },
+        { id: "f_url", key: "Portal URL", value: "https://github.com", isSecret: false },
+        { id: "f_db", key: "Database Host", value: "db.northstar.internal", isSecret: false },
+        { id: "f_port", key: "SSH Port", value: "22022", isSecret: false },
+      ],
     });
     expect(credential.service).toBe("GitHub Enterprise");
+    expect(credential.client).toBe("Northstar Labs");
+    expect(credential.fields).toHaveLength(4);
+    expect(credential.fields?.find((f) => f.key === "SSH Port")?.value).toBe("22022");
+    expect(credential.fields?.find((f) => f.key === "API Key")?.isSecret).toBe(true);
+
+    // Update credential to dynamically add another field
+    const updatedCred = await caller.credentials.update({
+      id: "c_crud_1",
+      fields: [
+        ...(credential.fields || []),
+        { id: "f_webhook", key: "Webhook Secret", value: "whsec_xyz987", isSecret: true },
+      ],
+    });
+    expect(updatedCred?.fields).toHaveLength(5);
+    expect(updatedCred?.fields?.some((f) => f.key === "Webhook Secret")).toBe(true);
 
     const credList = await caller.credentials.list();
-    expect(credList.some((c) => c.id === "c_crud_1")).toBe(true);
+    const fetchedCred = credList.find((c) => c.id === "c_crud_1");
+    expect(fetchedCred).toBeDefined();
+    expect(fetchedCred?.fields).toHaveLength(5);
+    expect(fetchedCred?.client).toBe("Northstar Labs");
 
     // Script CRUD
     const script = await caller.scripts.create({

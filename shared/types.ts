@@ -77,14 +77,23 @@ export type Receivable = {
   notes: string;
 };
 
+export type CredentialField = {
+  id?: string;
+  key: string;
+  value: string;
+  isSecret?: boolean;
+};
+
 export type Credential = {
   id: string;
   service: string;
   projectId: string;
+  client?: string;
   username: string;
   password: string;
   url: string;
   notes: string;
+  fields?: CredentialField[];
 };
 
 export type Script = {

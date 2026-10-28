@@ -364,4 +364,147 @@ describe("Project Completion & Outsourced Delivery Partner Flow", () => {
     expect(fullyPaidOutsource.status).toBe("Completed");
     expect(fullyPaidOutsource.payments).toHaveLength(3);
   });
+
+  it("records when to give the remaining payment and on which date during partial payment", () => {
+    const outsource = {
+      id: "o1",
+      projectId: "p1",
+      provider: "John Malik",
+      cost: 1400,
+      paid: 0,
+      status: "In Progress" as const,
+      notes: "Initial contract setup",
+      payments: [] as { id: string; amount: number; date: string; note?: string }[],
+    };
+
+    // User sends partial payment of 500 on 2026-10-28 and records when to give the remaining 900 on 2026-11-05
+    const partialAmount = 500;
+    const paidDate = "2026-10-28";
+    const remainingPayDate = "2026-11-05";
+    const remainingNote = "On final QA approval";
+
+    const newPaid = outsource.paid + partialAmount;
+    const remainingBalance = outsource.cost - newPaid;
+    const isNowFull = newPaid >= outsource.cost;
+
+    const paymentNote = `Partial payment · Remaining ₨${remainingBalance} scheduled for Nov 5, 2026 (${remainingNote})`;
+    const updatedNotes = `${outsource.notes} | Remaining ₨${remainingBalance} scheduled for ${remainingPayDate} (${remainingNote})`;
+
+    const updatedOutsource = {
+      ...outsource,
+      paid: newPaid,
+      paidAt: paidDate,
+      payDate: isNowFull ? undefined : remainingPayDate,
+      status: isNowFull ? ("Completed" as const) : ("In Progress" as const),
+      notes: updatedNotes,
+      payments: [
+        ...outsource.payments,
+        { id: "pay-1", amount: partialAmount, date: paidDate, note: paymentNote },
+      ],
+    };
+
+    // Verifications:
+    expect(updatedOutsource.paid).toBe(500);
+    expect(updatedOutsource.paidAt).toBe("2026-10-28");
+    // Remaining payment scheduled date is recorded
+    expect(updatedOutsource.payDate).toBe("2026-11-05");
+    expect(updatedOutsource.cost - updatedOutsource.paid).toBe(900);
+    expect(updatedOutsource.status).toBe("In Progress");
+    expect(updatedOutsource.notes).toContain("Remaining ₨900 scheduled for 2026-11-05 (On final QA approval)");
+    expect(updatedOutsource.payments[0].note).toContain("Remaining ₨900 scheduled for Nov 5, 2026");
+
+    // Second partial payment: user pays 400 on 2026-11-05 and reschedules remaining 500 for 2026-11-15
+    const partialAmount2 = 400;
+    const paidDate2 = "2026-11-05";
+    const remainingPayDate2 = "2026-11-15";
+    const newPaid2 = updatedOutsource.paid + partialAmount2;
+    const remainingBalance2 = updatedOutsource.cost - newPaid2;
+
+    const secondOutsource = {
+      ...updatedOutsource,
+      paid: newPaid2,
+      paidAt: paidDate2,
+      payDate: remainingPayDate2,
+      status: "In Progress" as const,
+      payments: [
+        ...updatedOutsource.payments,
+        {
+          id: "pay-2",
+          amount: partialAmount2,
+          date: paidDate2,
+          note: `Partial payment 2 · Remaining ₨${remainingBalance2} scheduled for Nov 15, 2026`,
+        },
+      ],
+    };
+
+    expect(secondOutsource.paid).toBe(900);
+    expect(secondOutsource.paidAt).toBe("2026-11-05");
+    expect(secondOutsource.payDate).toBe("2026-11-15");
+    expect(secondOutsource.cost - secondOutsource.paid).toBe(500);
+    expect(secondOutsource.payments).toHaveLength(2);
+
+    // Final payout: paying remaining 500 on 2026-11-15 clears payDate as it's fully paid
+    const remainingToPay = secondOutsource.cost - secondOutsource.paid;
+    const finalDate = "2026-11-15";
+    const finalPaid = secondOutsource.paid + remainingToPay;
+    const isFinallyFull = finalPaid >= secondOutsource.cost;
+
+    const fullyPaidOutsource = {
+      ...secondOutsource,
+      paid: finalPaid,
+      paidAt: finalDate,
+      payDate: isFinallyFull ? undefined : secondOutsource.payDate,
+      status: isFinallyFull ? ("Completed" as const) : ("In Progress" as const),
+      payments: [
+        ...secondOutsource.payments,
+        { id: "pay-3", amount: remainingToPay, date: finalDate, note: "Final partial payment (Paid in full)" },
+      ],
+    };
+
+    expect(fullyPaidOutsource.paid).toBe(1400);
+    expect(fullyPaidOutsource.paidAt).toBe("2026-11-15");
+    expect(fullyPaidOutsource.payDate).toBeUndefined();
+    expect(fullyPaidOutsource.status).toBe("Completed");
+    expect(fullyPaidOutsource.payments).toHaveLength(3);
+  });
+
+  it("supports recording remaining payment date when adding outsource with upfront partial payment", () => {
+    const cost = 2500;
+    const upfrontPayment = 1000;
+    const remainingPayDate = "2026-11-20";
+    const remainingNote = "Upon delivery milestone";
+
+    const remainingCost = cost - upfrontPayment;
+    const isPaid = upfrontPayment >= cost;
+
+    const newOutsource = {
+      id: "o-new-1",
+      projectId: "p1",
+      provider: "DevSprint Ltd",
+      contact: "team@devsprint.io",
+      description: "Frontend module implementation",
+      cost,
+      paid: upfrontPayment,
+      status: isPaid ? ("Completed" as const) : ("Assigned" as const),
+      paidAt: upfrontPayment > 0 ? "2026-10-28" : undefined,
+      payDate: !isPaid && remainingCost > 0 ? remainingPayDate : undefined,
+      notes: `Remaining payment (₨${remainingCost}) scheduled for Nov 20, 2026. (${remainingNote})`,
+      payments: [
+        {
+          id: "pm-1",
+          amount: upfrontPayment,
+          date: "2026-10-28",
+          note: `Upfront partial payment · Remaining ₨${remainingCost} scheduled for Nov 20, 2026`,
+        },
+      ],
+    };
+
+    expect(newOutsource.paid).toBe(1000);
+    expect(newOutsource.paidAt).toBe("2026-10-28");
+    expect(newOutsource.payDate).toBe("2026-11-20");
+    expect(newOutsource.cost - newOutsource.paid).toBe(1500);
+    expect(newOutsource.status).toBe("Assigned");
+    expect(newOutsource.payments[0].amount).toBe(1000);
+    expect(newOutsource.payments[0].note).toContain("Remaining ₨1500 scheduled for Nov 20, 2026");
+  });
 });

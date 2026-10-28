@@ -3,9 +3,9 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { Route, Switch, useLocation } from "wouter";
 import {
-  ArrowLeft, ArrowRight, ArrowUpRight, BarChart3, Bell, BriefcaseBusiness, Calculator, Calendar, Check,
+  ArrowLeft, ArrowRight, ArrowUpRight, BarChart3, Bell, BriefcaseBusiness, Building2, Calculator, Calendar, Check,
   CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, Code2, Copy, CreditCard, Eye, EyeOff, ExternalLink,
-  FileCode2, Filter, KeyRound, Link2, Menu, MoreHorizontal, Pencil, Plus, Receipt, RotateCcw, Search,
+  FileCode2, Filter, KeyRound, Link2, Lock, Menu, MoreHorizontal, Pencil, Plus, Receipt, RotateCcw, Search,
   Settings2, ShieldCheck, Sparkles, Trash2, TrendingUp, WalletCards, X, Zap, Clock3,
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
@@ -25,6 +25,7 @@ import type {
   Outsource,
   Receivable,
   Credential,
+  CredentialField,
   Script,
   Store,
   DrawerKind,
@@ -76,6 +77,32 @@ const parseDateInput = (input: string): string | null => {
     return formatIso(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
   }
   return null;
+};
+
+const getCredentialFields = (c: Credential): CredentialField[] => {
+  if (Array.isArray(c.fields) && c.fields.length > 0) {
+    return c.fields;
+  }
+  const synthesized: CredentialField[] = [];
+  if (c.username) {
+    synthesized.push({ id: "f-user", key: "Username / Email", value: c.username, isSecret: false });
+  }
+  if (c.password) {
+    synthesized.push({ id: "f-pass", key: "Password", value: c.password, isSecret: true });
+  }
+  if (c.url) {
+    synthesized.push({ id: "f-url", key: "URL", value: c.url, isSecret: false });
+  }
+  return synthesized;
+};
+
+const getCredentialClient = (item: Credential, projects: Project[]): string => {
+  if (item.client?.trim()) return item.client.trim();
+  if (item.projectId) {
+    const proj = projects.find(p => p.id === item.projectId);
+    if (proj?.client?.trim()) return proj.client.trim();
+  }
+  return "General / Shared";
 };
 
 const seed: Store = {
@@ -641,7 +668,15 @@ function CompleteProjectModal({
   outsource?: Outsource;
   onClose: () => void;
   onPayImmediately: (project: Project, outsource: Outsource, paidDate?: string, completeProject?: boolean) => void;
-  onPayPartial?: (project: Project, outsource: Outsource, partialAmount: number, paidDate?: string, completeProject?: boolean) => void;
+  onPayPartial?: (
+    project: Project,
+    outsource: Outsource,
+    partialAmount: number,
+    paidDate?: string,
+    remainingPayDate?: string,
+    remainingNote?: string,
+    completeProject?: boolean
+  ) => void;
   onSchedulePay: (project: Project, outsource: Outsource, payDate: string, completeProject?: boolean) => void;
   onTogglePaid: (outsourceId: string) => void;
   onCompleteOnly: (project: Project) => void;
@@ -651,7 +686,9 @@ function CompleteProjectModal({
   const [fullDate, setFullDate] = useState(today());
   const [partialDate, setPartialDate] = useState(today());
   const [partialAmountText, setPartialAmountText] = useState("");
-  const [scheduledDate, setScheduledDate] = useState(daysFromToday(7));
+  const [remainingPayDate, setRemainingPayDate] = useState(() => outsource?.payDate || daysFromToday(7));
+  const [remainingPayNote, setRemainingPayNote] = useState("");
+  const [scheduledDate, setScheduledDate] = useState(() => outsource?.payDate || daysFromToday(7));
   const [alsoCompleteProject, setAlsoCompleteProject] = useState(project.status !== "Completed");
 
   const isPaid = outsource ? outsource.paid >= outsource.cost : false;
@@ -710,6 +747,11 @@ function CompleteProjectModal({
                   <div className="partner-stat-item">
                     <span>Balance due</span>
                     <strong style={{ color: remaining > 0 ? "var(--amber)" : "var(--green)" }}>{money(remaining)}</strong>
+                    {outsource.payDate && remaining > 0 && (
+                      <small style={{ fontSize: "10px", color: "#f59e0b", display: "block", marginTop: 2 }}>
+                        Due on {dateLabel(outsource.payDate)}
+                      </small>
+                    )}
                   </div>
                 </div>
 
@@ -720,8 +762,11 @@ function CompleteProjectModal({
                     </span>
                     <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: "80px", overflowY: "auto" }}>
                       {outsource.payments.map((p, idx) => (
-                        <div key={p.id || idx} style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: "#cbd5e1" }}>
-                          <span><Check size={10} style={{ color: "#4ade80", display: "inline", marginRight: 4 }} />{p.note || "Payment"}</span>
+                        <div key={p.id || idx} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "11px", color: "#cbd5e1" }}>
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "60%" }}>
+                            <Check size={10} style={{ color: "#4ade80", display: "inline", marginRight: 4 }} />
+                            {p.note || "Payment"}
+                          </span>
                           <strong>{money(p.amount)} on {dateLabel(p.date)}</strong>
                         </div>
                       ))}
@@ -853,6 +898,55 @@ function CompleteProjectModal({
                     value={partialDate}
                     onChange={setPartialDate}
                   />
+
+                  {/* When remaining balance is greater than 0, record when to give the remaining payment and on which date */}
+                  {remainingAfterPartial > 0 && (
+                    <div className="remaining-schedule-card">
+                      <div className="schedule-pay-title">
+                        <Calendar size={15} style={{ color: "#f59e0b" }} />
+                        <strong style={{ color: "#ffffff" }}>
+                          When to give remaining payment ({money(remainingAfterPartial)})
+                        </strong>
+                      </div>
+                      <p className="table-subtle" style={{ margin: "2px 0 6px", fontSize: "11px" }}>
+                        Record the date and terms when you plan to give the remaining {money(remainingAfterPartial)} balance to {outsource.provider}.
+                      </p>
+
+                      <div className="quick-date-chips">
+                        {[
+                          { label: "Tomorrow", val: daysFromToday(1) },
+                          { label: "In 3 days", val: daysFromToday(3) },
+                          { label: "Next week", val: daysFromToday(7) },
+                          { label: "In 2 weeks", val: daysFromToday(14) },
+                          { label: "In 1 month", val: daysFromToday(30) },
+                        ].map(chip => (
+                          <button
+                            key={chip.label}
+                            type="button"
+                            className={`quick-date-chip ${remainingPayDate === chip.val ? "active" : ""}`}
+                            onClick={() => setRemainingPayDate(chip.val)}
+                          >
+                            {chip.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <CalendarPicker
+                        label="Date for remaining payment (select on calendar or write)"
+                        value={remainingPayDate}
+                        onChange={setRemainingPayDate}
+                        required
+                      />
+
+                      <Field
+                        label="Remaining payment milestone / note (optional)"
+                        value={remainingPayNote}
+                        onChange={setRemainingPayNote}
+                        placeholder="e.g. On final delivery, after QA review, or upon client sign-off"
+                      />
+                    </div>
+                  )}
+
                   <div className="payment-breakdown-card">
                     <div className="payment-breakdown-row">
                       <span>Paying now:</span>
@@ -863,11 +957,21 @@ function CompleteProjectModal({
                       <strong>{dateLabel(partialDate)}</strong>
                     </div>
                     <div className="payment-breakdown-row" style={{ borderTop: "1px dashed rgba(255,255,255,0.1)", paddingTop: 5 }}>
-                      <span>Remaining amount after payment:</span>
+                      <span>Remaining balance after payment:</span>
                       <strong style={{ color: remainingAfterPartial > 0 ? "var(--amber)" : "#4ade80" }}>
                         {money(remainingAfterPartial)} {remainingAfterPartial === 0 ? "(Paid in full)" : "remaining"}
                       </strong>
                     </div>
+                    {remainingAfterPartial > 0 && remainingPayDate && (
+                      <div className="payment-breakdown-row" style={{ color: "#f59e0b" }}>
+                        <span>Remaining payment scheduled:</span>
+                        <strong>
+                          <Calendar size={12} style={{ display: "inline", verticalAlign: "middle", marginRight: 4 }} />
+                          {dateLabel(remainingPayDate)}
+                          {remainingPayNote ? ` (${remainingPayNote})` : ""}
+                        </strong>
+                      </div>
+                    )}
                   </div>
                   <button
                     type="button"
@@ -875,13 +979,24 @@ function CompleteProjectModal({
                     disabled={parsedPartialAmount <= 0}
                     onClick={() => {
                       if (onPayPartial) {
-                        onPayPartial(project, outsource, parsedPartialAmount, partialDate, alsoCompleteProject);
+                        onPayPartial(
+                          project,
+                          outsource,
+                          parsedPartialAmount,
+                          partialDate,
+                          remainingAfterPartial > 0 ? remainingPayDate : undefined,
+                          remainingAfterPartial > 0 ? remainingPayNote : undefined,
+                          alsoCompleteProject
+                        );
                       } else {
                         onPayImmediately(project, outsource, partialDate, alsoCompleteProject);
                       }
                     }}
                   >
-                    <CircleDollarSign size={16} /> Send partial payment of {money(parsedPartialAmount)} on {dateLabel(partialDate)}
+                    <CircleDollarSign size={16} />
+                    {remainingAfterPartial > 0 && remainingPayDate
+                      ? `Send ${money(parsedPartialAmount)} & schedule remaining ${money(remainingAfterPartial)} for ${dateLabel(remainingPayDate)}`
+                      : `Send partial payment of ${money(parsedPartialAmount)} on ${dateLabel(partialDate)}`}
                   </button>
                 </div>
               )}
@@ -891,7 +1006,7 @@ function CompleteProjectModal({
                 <div className="schedule-pay-section">
                   <div className="schedule-pay-title">
                     <Calendar size={15} />
-                    <span>Option 3: Set scheduled payout date</span>
+                    <span>Option 3: {outsource.paid > 0 ? "Reschedule remaining payout date" : "Set scheduled payout date"}</span>
                   </div>
                   <div className="quick-date-chips">
                     {[
@@ -899,6 +1014,7 @@ function CompleteProjectModal({
                       { label: "In 3 days", val: daysFromToday(3) },
                       { label: "Next week", val: daysFromToday(7) },
                       { label: "In 2 weeks", val: daysFromToday(14) },
+                      { label: "In 1 month", val: daysFromToday(30) },
                     ].map(chip => (
                       <button
                         key={chip.label}
@@ -930,7 +1046,7 @@ function CompleteProjectModal({
                     className="secondary-button complete-action-button"
                     onClick={() => onSchedulePay(project, outsource, scheduledDate, alsoCompleteProject)}
                   >
-                    <Calendar size={15} /> Schedule for {dateLabel(scheduledDate)} & complete
+                    <Calendar size={15} /> Schedule for {dateLabel(scheduledDate)} {alsoCompleteProject ? "& complete" : ""}
                   </button>
                 </div>
               )}
@@ -1144,8 +1260,8 @@ function ProjectTable({
                         </>
                       )}
                       {outsource.payDate && outsource.paid < outsource.cost && (
-                        <span style={{ fontSize: "10px", color: "var(--muted)", display: "inline-flex", alignItems: "center", gap: 3 }}>
-                          <Calendar size={10} /> Pay by {dateLabel(outsource.payDate)}
+                        <span style={{ fontSize: "10px", color: outsource.paid > 0 ? "#f59e0b" : "var(--muted)", display: "inline-flex", alignItems: "center", gap: 3 }}>
+                          <Calendar size={10} /> {outsource.paid > 0 ? "Remaining due" : "Pay by"} {dateLabel(outsource.payDate)}
                         </span>
                       )}
                     </div>
@@ -1423,8 +1539,8 @@ function ProjectDetailPage({
                       </span>
                     )}
                     {mainOutsource.payDate && mainOutsource.paid < mainOutsource.cost && (
-                      <span style={{ fontSize: "10px", color: "var(--muted)", display: "inline-flex", alignItems: "center", gap: 3 }}>
-                        <Calendar size={10} /> Pay by: {dateLabel(mainOutsource.payDate)}
+                      <span style={{ fontSize: "10px", color: mainOutsource.paid > 0 ? "#f59e0b" : "var(--muted)", display: "inline-flex", alignItems: "center", gap: 3 }}>
+                        <Calendar size={10} /> {mainOutsource.paid > 0 ? "Remaining due:" : "Pay by:"} {dateLabel(mainOutsource.payDate)}
                       </span>
                     )}
                   </div>
@@ -1560,6 +1676,11 @@ function OutsourcedPage({ store, openDrawer, navigate, onTogglePartnerPaid, onOp
                           <span className="table-subtle" style={{ fontSize: "10px", color: "var(--amber)" }}>
                             {money(item.cost - item.paid)} remaining
                           </span>
+                          {item.payDate && (
+                            <span style={{ fontSize: "10px", color: "#f59e0b", display: "inline-flex", alignItems: "center", gap: 3 }}>
+                              <Calendar size={10} /> Remaining due: {dateLabel(item.payDate)}
+                            </span>
+                          )}
                         </div>
                       ) : item.payDate ? (
                         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -1607,8 +1728,8 @@ function OutsourcedPage({ store, openDrawer, navigate, onTogglePartnerPaid, onOp
                           </div>
                         )}
                         {item.payDate && !isPaid && (
-                          <div style={{ fontSize: "10px", color: "var(--muted)", marginTop: 2, display: "flex", alignItems: "center", gap: 3 }}>
-                            <Calendar size={10} /> Payout date: {dateLabel(item.payDate)}
+                          <div style={{ fontSize: "10px", color: item.paid > 0 ? "#f59e0b" : "var(--muted)", marginTop: 2, display: "flex", alignItems: "center", gap: 3 }}>
+                            <Calendar size={10} /> {item.paid > 0 ? "Remaining due:" : "Payout date:"} {dateLabel(item.payDate)}
                           </div>
                         )}
                       </div>
@@ -1712,7 +1833,21 @@ function ReceivablesPage({ store, openDrawer, navigate }: { store: Store; openDr
   );
 }
 
-function ToolsPage({ store, setStore, openDrawer, navigate }: { store: Store; setStore: Dispatch<SetStateAction<Store>>; openDrawer: (kind: DrawerKind, context?: Project) => void; navigate: (path: string) => void }) {
+function ToolsPage({
+  store,
+  setStore,
+  openDrawer,
+  navigate,
+}: {
+  store: Store;
+  setStore: Dispatch<SetStateAction<Store>>;
+  openDrawer: (
+    kind: DrawerKind,
+    context?: Project,
+    extra?: { editingCredential?: Credential; defaultClient?: string }
+  ) => void;
+  navigate: (path: string) => void;
+}) {
   const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams();
   const tabParam = params.get("tab");
   const defaultTab: ToolTab = (tabParam === "amounts" || tabParam === "calculator") ? "calculator" : (tabParam as ToolTab) || "credentials";
@@ -1724,9 +1859,515 @@ function ToolsPage({ store, setStore, openDrawer, navigate }: { store: Store; se
   ];
   return <><PageHeader eyebrow="Utilities" title="Tools that stay close." description="Small, focused utilities for the work between projects." /><div className="tool-tabs">{tabs.map(item => { const Icon = item.icon; const isActive = tab === item.id || (item.id === "calculator" && tab === "amounts"); return <button key={item.id} className={isActive ? "active" : ""} onClick={() => setTab(item.id)}><Icon size={16} /> {item.label}</button>; })}</div>{tab === "credentials" && <CredentialsTab store={store} setStore={setStore} openDrawer={openDrawer} navigate={navigate} />}{tab === "scripts" && <ScriptsTab store={store} openDrawer={openDrawer} navigate={navigate} />}{(tab === "calculator" || tab === "amounts") && <CalculatorTab />}</>;
 }
-function CredentialsTab({ store, setStore, openDrawer, navigate }: { store: Store; setStore: Dispatch<SetStateAction<Store>>; openDrawer: (kind: DrawerKind, context?: Project) => void; navigate: (path: string) => void }) {
-  const [revealed, setRevealed] = useState<string[]>([]); const [query, setQuery] = useState(""); const filtered = store.credentials.filter(item => `${item.service} ${item.username}`.toLowerCase().includes(query.toLowerCase())); const remove = (id: string) => { if (!window.confirm("Delete this credential? This cannot be undone.")) return; setStore(current => ({ ...current, credentials: current.credentials.filter(item => item.id !== id) })); toast.success("Credential removed"); };
-  return <section className="section-block tools-section"><div className="section-heading"><div><div className="section-kicker">Private access</div><h2>Credentials <span>{store.credentials.length}</span></h2><p className="section-description">Keep service access close to the project it belongs to.</p></div><button className="primary-button" onClick={() => openDrawer("credential")}><Plus size={16} /> Add credential</button></div><div className="tool-toolbar"><div className="search-field"><Search size={16} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search services" /></div><div className="privacy-note"><ShieldCheck size={15} /> Passwords hidden by default</div></div><div className="credential-list">{filtered.map(item => { const project = store.projects.find(p => p.id === item.projectId); const visible = revealed.includes(item.id); return <div className="credential-card" key={item.id}><div className="credential-service-icon"><KeyRound size={18} /></div><div className="credential-main"><div className="credential-title"><div><strong>{item.service}</strong><span>{project ? <button className="subtle-link" onClick={() => navigate(`/projects/${project.id}`)}>{project.name}</button> : "No linked project"}</span></div><div className="credential-actions"><button className="icon-button" onClick={() => setRevealed(current => current.includes(item.id) ? current.filter(id => id !== item.id) : [...current, item.id])}>{visible ? <EyeOff size={15} /> : <Eye size={15} />}</button><button className="icon-button" onClick={() => { navigator.clipboard?.writeText(item.password); toast.success("Password copied"); }}><Copy size={15} /></button><button className="icon-button" onClick={() => remove(item.id)}><Trash2 size={15} /></button></div></div><div className="credential-fields"><div><span>Username / email</span><strong>{item.username}</strong></div><div><span>Password</span><strong className="password-field">{visible ? item.password : "••••••••••••"}</strong></div><div className="url-field"><span>URL</span><a href={item.url} target="_blank" rel="noreferrer">{item.url.replace("https://", "")} <ExternalLink size={12} /></a></div></div></div></div>; })}{!filtered.length && <EmptyState icon={KeyRound} title="No credentials found" description="Add a service credential or adjust your search." action={<button className="secondary-button" onClick={() => openDrawer("credential")}><Plus size={15} /> Add credential</button>} />}</div></section>;
+function CredentialsTab({
+  store,
+  setStore,
+  openDrawer,
+  navigate,
+}: {
+  store: Store;
+  setStore: Dispatch<SetStateAction<Store>>;
+  openDrawer: (
+    kind: DrawerKind,
+    context?: Project,
+    extra?: { editingCredential?: Credential; defaultClient?: string }
+  ) => void;
+  navigate: (path: string) => void;
+}) {
+  const [selectedClient, setSelectedClient] = useState<string>("All");
+  const [query, setQuery] = useState("");
+  const [revealedSecrets, setRevealedSecrets] = useState<string[]>([]);
+  const [addingFieldCardId, setAddingFieldCardId] = useState<string | null>(null);
+  const [inlineKey, setInlineKey] = useState("");
+  const [inlineValue, setInlineValue] = useState("");
+  const [inlineSecret, setInlineSecret] = useState(false);
+
+  // Collect all unique clients
+  const allClients = useMemo(() => {
+    const set = new Set<string>();
+    store.projects.forEach(p => { if (p.client?.trim()) set.add(p.client.trim()); });
+    store.credentials.forEach(c => {
+      const cl = getCredentialClient(c, store.projects);
+      if (cl) set.add(cl);
+    });
+    return Array.from(set).sort();
+  }, [store.projects, store.credentials]);
+
+  // Counts of credentials per client
+  const clientCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    store.credentials.forEach(c => {
+      const cl = getCredentialClient(c, store.projects);
+      counts[cl] = (counts[cl] || 0) + 1;
+    });
+    return counts;
+  }, [store.credentials, store.projects]);
+
+  // Filtered credentials based on query and client selection
+  const filtered = useMemo(() => {
+    return store.credentials.filter(item => {
+      const clientName = getCredentialClient(item, store.projects);
+      if (selectedClient !== "All" && clientName.toLowerCase() !== selectedClient.toLowerCase()) {
+        return false;
+      }
+      if (!query.trim()) return true;
+      const q = query.toLowerCase();
+      const serviceMatch = item.service.toLowerCase().includes(q);
+      const clientMatch = clientName.toLowerCase().includes(q);
+      const notesMatch = item.notes?.toLowerCase().includes(q);
+      const project = store.projects.find(p => p.id === item.projectId);
+      const projectMatch = project?.name.toLowerCase().includes(q);
+      const fields = getCredentialFields(item);
+      const fieldMatch = fields.some(f => f.key.toLowerCase().includes(q) || f.value.toLowerCase().includes(q));
+      return serviceMatch || clientMatch || notesMatch || projectMatch || fieldMatch;
+    });
+  }, [store.credentials, store.projects, selectedClient, query]);
+
+  // Group filtered credentials by client
+  const groupedClients = useMemo(() => {
+    const map = new Map<string, Credential[]>();
+
+    // If specific client selected, ensure it appears even if 0 credentials yet
+    if (selectedClient !== "All") {
+      map.set(selectedClient, []);
+    }
+
+    filtered.forEach(item => {
+      const cl = getCredentialClient(item, store.projects);
+      const existing = map.get(cl) || [];
+      existing.push(item);
+      map.set(cl, existing);
+    });
+
+    return Array.from(map.entries());
+  }, [filtered, selectedClient, store.projects]);
+
+  const totalKeysCount = useMemo(() => {
+    return store.credentials.reduce((acc, c) => acc + getCredentialFields(c).length, 0);
+  }, [store.credentials]);
+
+  const removeCredential = (id: string) => {
+    if (!window.confirm("Delete this credential and all its keys? This cannot be undone.")) return;
+    setStore(current => ({
+      ...current,
+      credentials: current.credentials.filter(item => item.id !== id),
+    }));
+    toast.success("Credential removed");
+  };
+
+  const removeField = (credentialId: string, fieldIndex: number) => {
+    setStore(current => ({
+      ...current,
+      credentials: current.credentials.map(c => {
+        if (c.id !== credentialId) return c;
+        const currentFields = getCredentialFields(c);
+        return {
+          ...c,
+          fields: currentFields.filter((_, idx) => idx !== fieldIndex),
+        };
+      }),
+    }));
+    toast.success("Field removed");
+  };
+
+  const handleSaveInlineField = (credentialId: string) => {
+    if (!inlineKey.trim() && !inlineValue.trim()) {
+      return toast.error("Key or value is required");
+    }
+    setStore(current => ({
+      ...current,
+      credentials: current.credentials.map(c => {
+        if (c.id !== credentialId) return c;
+        const currentFields = getCredentialFields(c);
+        return {
+          ...c,
+          fields: [
+            ...currentFields,
+            { id: uid(), key: inlineKey.trim() || "Field", value: inlineValue.trim(), isSecret: inlineSecret },
+          ],
+        };
+      }),
+    }));
+    toast.success(`Added field "${inlineKey || "Field"}"`);
+    setInlineKey("");
+    setInlineValue("");
+    setInlineSecret(false);
+    setAddingFieldCardId(null);
+  };
+
+  const toggleFieldReveal = (fieldId: string) => {
+    setRevealedSecrets(curr =>
+      curr.includes(fieldId) ? curr.filter(id => id !== fieldId) : [...curr, fieldId]
+    );
+  };
+
+  const toggleCardReveal = (credential: Credential) => {
+    const fields = getCredentialFields(credential);
+    const secretIds = fields.filter(f => f.isSecret).map((f, i) => f.id || `${credential.id}-${i}`);
+    const allRevealed = secretIds.every(id => revealedSecrets.includes(id));
+    if (allRevealed) {
+      setRevealedSecrets(curr => curr.filter(id => !secretIds.includes(id)));
+    } else {
+      setRevealedSecrets(curr => Array.from(new Set([...curr, ...secretIds])));
+    }
+  };
+
+  return (
+    <section className="section-block tools-section">
+      <div className="section-heading">
+        <div>
+          <div className="section-kicker">Client-focused private access</div>
+          <h2>
+            Credentials & Access <span>{store.credentials.length} services · {totalKeysCount} keys</span>
+          </h2>
+          <p className="section-description">
+            Organize multiple dynamic key-value fields (API keys, secrets, tokens, URLs) under each client.
+          </p>
+        </div>
+        <button className="primary-button" onClick={() => openDrawer("credential")}>
+          <Plus size={16} /> Add credential
+        </button>
+      </div>
+
+      <div className="tool-toolbar" style={{ marginBottom: "12px" }}>
+        <div className="search-field">
+          <Search size={16} />
+          <input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Search by client, service name, key, or value..."
+          />
+        </div>
+        <div className="privacy-note">
+          <ShieldCheck size={15} /> Passwords & secrets masked by default · One-click copy
+        </div>
+      </div>
+
+      {/* Client filter pills */}
+      <div className="client-filter-bar">
+        <button
+          className={`client-chip ${selectedClient === "All" ? "active" : ""}`}
+          onClick={() => setSelectedClient("All")}
+        >
+          <Building2 size={12} />
+          <span>All Clients</span>
+          <span className="client-chip-count">{store.credentials.length}</span>
+        </button>
+        {allClients.map(cl => (
+          <button
+            key={cl}
+            className={`client-chip ${selectedClient.toLowerCase() === cl.toLowerCase() ? "active" : ""}`}
+            onClick={() => setSelectedClient(cl)}
+          >
+            <span>{cl}</span>
+            <span className="client-chip-count">{clientCounts[cl] || 0}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Grouped Client sections */}
+      <div className="client-groups-container">
+        {groupedClients.map(([clientName, credentials]) => {
+          const clientInitial = (clientName.trim()[0] || "C").toUpperCase();
+          const totalClientKeys = credentials.reduce((sum, c) => sum + getCredentialFields(c).length, 0);
+
+          return (
+            <div className="client-group-card" key={clientName}>
+              <div className="client-group-header">
+                <div className="client-group-title-wrap">
+                  <div className="client-group-avatar">{clientInitial}</div>
+                  <div className="client-group-info">
+                    <h3>{clientName}</h3>
+                    <span>
+                      {credentials.length} {credentials.length === 1 ? "service" : "services"} · {totalClientKeys} dynamic {totalClientKeys === 1 ? "key" : "keys"}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  className="secondary-button"
+                  style={{ fontSize: "11px", padding: "0 10px", minHeight: "30px" }}
+                  onClick={() => openDrawer("credential", undefined, { defaultClient: clientName })}
+                >
+                  <Plus size={13} /> Add keys for {clientName}
+                </button>
+              </div>
+
+              <div className="client-group-content">
+                {credentials.map(item => {
+                  const project = store.projects.find(p => p.id === item.projectId);
+                  const fields = getCredentialFields(item);
+                  const isAddingField = addingFieldCardId === item.id;
+                  const secretFields = fields.filter(f => f.isSecret);
+                  const isAnyCardSecretRevealed = secretFields.some((f, i) =>
+                    revealedSecrets.includes(f.id || `${item.id}-${i}`)
+                  );
+
+                  return (
+                    <div className="tool-credential-card" key={item.id}>
+                      <div className="tool-card-header">
+                        <div className="tool-service-info">
+                          <div className="tool-service-icon">
+                            <KeyRound size={16} />
+                          </div>
+                          <span className="tool-service-name">{item.service}</span>
+                          {project && (
+                            <button
+                              className="tool-project-badge"
+                              onClick={() => navigate(`/projects/${project.id}`)}
+                            >
+                              {project.name}
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="credential-actions">
+                          {secretFields.length > 0 && (
+                            <button
+                              className="icon-button"
+                              title={isAnyCardSecretRevealed ? "Hide all secrets" : "Reveal all secrets"}
+                              onClick={() => toggleCardReveal(item)}
+                            >
+                              {isAnyCardSecretRevealed ? <EyeOff size={14} /> : <Eye size={14} />}
+                            </button>
+                          )}
+                          <button
+                            className="icon-button"
+                            title="Add another key-value field"
+                            onClick={() => {
+                              if (isAddingField) {
+                                setAddingFieldCardId(null);
+                              } else {
+                                setAddingFieldCardId(item.id);
+                                setInlineKey("");
+                                setInlineValue("");
+                                setInlineSecret(false);
+                              }
+                            }}
+                          >
+                            <Plus size={14} />
+                          </button>
+                          <button
+                            className="icon-button"
+                            title="Edit service & all keys"
+                            onClick={() => openDrawer("credential", undefined, { editingCredential: item })}
+                          >
+                            <Pencil size={14} />
+                          </button>
+                          <button
+                            className="icon-button"
+                            title="Delete this credential"
+                            onClick={() => removeCredential(item.id)}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+
+                      {item.notes && <p className="tool-notes-text">{item.notes}</p>}
+
+                      {/* Dynamic Key-Value Grid */}
+                      <div className="dynamic-fields-grid">
+                        {fields.map((field, fIdx) => {
+                          const fieldId = field.id || `${item.id}-${fIdx}`;
+                          const isRevealed = revealedSecrets.includes(fieldId);
+                          const isSecret = Boolean(field.isSecret);
+                          const isUrl =
+                            field.value.startsWith("http://") ||
+                            field.value.startsWith("https://");
+
+                          return (
+                            <div className="dynamic-field-card" key={fieldId}>
+                              <div className="field-header-row">
+                                <span className="field-key-name">{field.key || "Field"}</span>
+                                {isSecret && (
+                                  <span className="field-secret-indicator">
+                                    <Lock size={9} style={{ display: "inline", marginRight: "2px" }} />
+                                    Secret
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="field-value-row">
+                                <span
+                                  className={`field-value-text ${isSecret && !isRevealed ? "field-value-masked" : ""}`}
+                                  title={isSecret && !isRevealed ? "Hidden" : field.value}
+                                >
+                                  {isSecret && !isRevealed ? "••••••••••••" : field.value || "—"}
+                                </span>
+
+                                <div className="field-button-group">
+                                  {isSecret && (
+                                    <button
+                                      className="mini-action-btn"
+                                      title={isRevealed ? "Hide value" : "Reveal value"}
+                                      onClick={() => toggleFieldReveal(fieldId)}
+                                    >
+                                      {isRevealed ? <EyeOff size={13} /> : <Eye size={13} />}
+                                    </button>
+                                  )}
+                                  <button
+                                    className="mini-action-btn"
+                                    title={`Copy ${field.key}`}
+                                    onClick={() => {
+                                      navigator.clipboard?.writeText(field.value);
+                                      toast.success(`Copied ${field.key || "value"}`);
+                                    }}
+                                  >
+                                    <Copy size={13} />
+                                  </button>
+                                  {isUrl && (
+                                    <a
+                                      href={field.value}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="mini-action-btn"
+                                      title="Open link"
+                                    >
+                                      <ExternalLink size={13} />
+                                    </a>
+                                  )}
+                                  <button
+                                    className="mini-action-btn delete"
+                                    title="Delete this field"
+                                    onClick={() => removeField(item.id, fIdx)}
+                                  >
+                                    <X size={13} />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Inline Add Field Box */}
+                      {isAddingField && (
+                        <div className="inline-add-field-card">
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <strong style={{ fontSize: "11px", color: "var(--ink)" }}>
+                              Add key-value field to {item.service}
+                            </strong>
+                            <button
+                              type="button"
+                              className="mini-action-btn"
+                              onClick={() => setAddingFieldCardId(null)}
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+
+                          <div className="quick-keys-suggestions">
+                            <span style={{ color: "var(--muted)" }}>Quick presets:</span>
+                            {["API Key", "API Secret", "Staging URL", "Token", "SSH Port", "Webhook URL"].map(preset => (
+                              <button
+                                key={preset}
+                                type="button"
+                                className="quick-key-pill"
+                                onClick={() => {
+                                  setInlineKey(preset);
+                                  if (/secret|token|pass/i.test(preset)) setInlineSecret(true);
+                                }}
+                              >
+                                {preset}
+                              </button>
+                            ))}
+                          </div>
+
+                          <div className="inline-form-row">
+                            <input
+                              type="text"
+                              placeholder="Key (e.g. API Key)"
+                              value={inlineKey}
+                              onChange={e => setInlineKey(e.target.value)}
+                              style={{
+                                height: "34px",
+                                border: "1px solid var(--line)",
+                                borderRadius: "6px",
+                                padding: "0 9px",
+                                fontSize: "12px",
+                              }}
+                            />
+                            <input
+                              type={inlineSecret ? "password" : "text"}
+                              placeholder="Value (e.g. sk-live-123...)"
+                              value={inlineValue}
+                              onChange={e => setInlineValue(e.target.value)}
+                              style={{
+                                height: "34px",
+                                border: "1px solid var(--line)",
+                                borderRadius: "6px",
+                                padding: "0 9px",
+                                fontSize: "12px",
+                                fontFamily: inlineSecret ? "monospace" : "inherit",
+                              }}
+                            />
+                            <label
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "4px",
+                                fontSize: "11px",
+                                cursor: "pointer",
+                                color: "var(--muted)",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={inlineSecret}
+                                onChange={e => setInlineSecret(e.target.checked)}
+                              />
+                              Secret
+                            </label>
+                            <button
+                              type="button"
+                              className="primary-button"
+                              style={{ padding: "0 12px", minHeight: "34px", fontSize: "11px", whiteSpace: "nowrap" }}
+                              onClick={() => handleSaveInlineField(item.id)}
+                            >
+                              Add field
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {credentials.length === 0 && (
+                  <div style={{ padding: "20px", textAlign: "center", color: "var(--muted)", fontSize: "12px" }}>
+                    No credentials saved yet under {clientName}.
+                    <div style={{ marginTop: "8px" }}>
+                      <button
+                        className="secondary-button"
+                        style={{ fontSize: "11px", padding: "0 10px", minHeight: "28px" }}
+                        onClick={() => openDrawer("credential", undefined, { defaultClient: clientName })}
+                      >
+                        <Plus size={13} /> Add first key for {clientName}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+
+        {groupedClients.length === 0 && (
+          <EmptyState
+            icon={KeyRound}
+            title="No credentials or keys found"
+            description="Add service credentials or adjust your search / client filter."
+            action={
+              <button className="secondary-button" onClick={() => openDrawer("credential")}>
+                <Plus size={15} /> Add credential
+              </button>
+            }
+          />
+        )}
+      </div>
+    </section>
+  );
 }
 function ScriptsTab({ store, openDrawer, navigate }: { store: Store; openDrawer: (kind: DrawerKind, context?: Project) => void; navigate: (path: string) => void }) {
   const [query, setQuery] = useState(""); const [category, setCategory] = useState("All categories"); const filtered = store.scripts.filter(item => `${item.name} ${item.description} ${item.tags.join(" ")}`.toLowerCase().includes(query.toLowerCase()) && (category === "All categories" || item.category === category)); const categories = ["All categories", "Linux", "Docker", "AWS", "Python", "DevOps", "Database", "Deployment", "AI", "Automation", "n8n", "Other"];
@@ -2043,23 +2684,445 @@ function CalculatorTab() {
   );
 }
 
-function Drawer({ kind, context, store, setStore, close }: { kind: DrawerKind; context?: Project; store: Store; setStore: Dispatch<SetStateAction<Store>>; close: () => void }) {
-  const [projectName, setProjectName] = useState(""); const [client, setClient] = useState(""); const [contact, setContact] = useState(""); const [description, setDescription] = useState(""); const [amount, setAmount] = useState(""); const [deadline, setDeadline] = useState(daysFromToday(14)); const [priority, setPriority] = useState<Priority>("Medium"); const [provider, setProvider] = useState(""); const [providerContact, setProviderContact] = useState(""); const [cost, setCost] = useState(""); const [payment, setPayment] = useState(""); const [skipPayment, setSkipPayment] = useState(false); const [selectedProject, setSelectedProject] = useState(context?.id || store.projects[0]?.id || ""); const [service, setService] = useState(""); const [username, setUsername] = useState(""); const [password, setPassword] = useState(""); const [url, setUrl] = useState(""); const [scriptName, setScriptName] = useState(""); const [category, setCategory] = useState("Linux"); const [scriptCode, setScriptCode] = useState(""); const selected = store.projects.find(item => item.id === selectedProject); const titles: Record<DrawerKind, string> = { project: "Add a project", outsource: "Add outsourced work", receivable: "Add receivable", credential: "Save a credential", script: "Add a script", payment: "Record a payment" };
+function Drawer({
+  kind,
+  context,
+  editingCredential,
+  defaultClient,
+  store,
+  setStore,
+  close,
+}: {
+  kind: DrawerKind;
+  context?: Project;
+  editingCredential?: Credential;
+  defaultClient?: string;
+  store: Store;
+  setStore: Dispatch<SetStateAction<Store>>;
+  close: () => void;
+}) {
+  const [projectName, setProjectName] = useState("");
+  const [client, setClient] = useState("");
+  const [contact, setContact] = useState("");
+  const [description, setDescription] = useState("");
+  const [amount, setAmount] = useState("");
+  const [deadline, setDeadline] = useState(daysFromToday(14));
+  const [priority, setPriority] = useState<Priority>("Medium");
+  const [provider, setProvider] = useState("");
+  const [providerContact, setProviderContact] = useState("");
+  const [cost, setCost] = useState("");
+  const [payment, setPayment] = useState("");
+  const [skipPayment, setSkipPayment] = useState(false);
+  const [remainingDate, setRemainingDate] = useState(daysFromToday(7));
+  const [remainingNote, setRemainingNote] = useState("");
+  const [selectedProject, setSelectedProject] = useState(context?.id || store.projects[0]?.id || "");
+  const [scriptName, setScriptName] = useState("");
+  const [category, setCategory] = useState("Linux");
+  const [scriptCode, setScriptCode] = useState("");
+
+  // Existing known clients for credentials
+  const existingClients = useMemo(() => {
+    const set = new Set<string>();
+    store.projects.forEach(p => { if (p.client?.trim()) set.add(p.client.trim()); });
+    store.credentials.forEach(c => {
+      const cl = getCredentialClient(c, store.projects);
+      if (cl) set.add(cl);
+    });
+    return Array.from(set).sort();
+  }, [store.projects, store.credentials]);
+
+  const [credClient, setCredClient] = useState<string>(() => {
+    if (defaultClient) return defaultClient;
+    if (editingCredential?.client) return editingCredential.client;
+    if (context?.client) return context.client;
+    return store.projects[0]?.client || "";
+  });
+  const [credService, setCredService] = useState<string>(editingCredential?.service || "");
+  const [credProject, setCredProject] = useState<string>(editingCredential?.projectId || context?.id || "");
+  const [credNotes, setCredNotes] = useState<string>(editingCredential?.notes || "");
+  const [credFields, setCredFields] = useState<Array<{ id: string; key: string; value: string; isSecret: boolean }>>(() => {
+    if (editingCredential) {
+      return getCredentialFields(editingCredential).map(f => ({
+        id: f.id || uid(),
+        key: f.key,
+        value: f.value,
+        isSecret: Boolean(f.isSecret),
+      }));
+    }
+    return [
+      { id: uid(), key: "API Key / Username", value: "", isSecret: false },
+      { id: uid(), key: "Secret / Password", value: "", isSecret: true },
+      { id: uid(), key: "Endpoint URL", value: "", isSecret: false },
+    ];
+  });
+
+  const selected = store.projects.find(item => item.id === selectedProject);
+  const titles: Record<DrawerKind, string> = {
+    project: "Add a project",
+    outsource: "Add outsourced work",
+    receivable: "Add receivable",
+    credential: editingCredential ? "Edit credential & keys" : "Save credentials & keys",
+    script: "Add a script",
+    payment: "Record a payment",
+  };
   const save = () => { const amountValue = evaluateExpression(amount); const costValue = evaluateExpression(cost); const paymentValue = evaluateExpression(payment); if (kind === "project") { if (!projectName.trim() || !client.trim()) return toast.error("Add a project name and client first."); setStore(current => ({ ...current, projects: [{ id: uid(), name: projectName, client, contact, description: description || "A new project ready to move forward.", start: today(), deadline, status: "New", priority, amount: amountValue, received: 0, outsourced: false, notes: "", tasks: [{ id: uid(), label: "Define next step", done: false }] }, ...current.projects] })); toast.success("Project added"); }
-    if (kind === "outsource") { if (!selectedProject || !provider.trim()) return toast.error("Select a project and add a delivery partner."); const effectivePayment = skipPayment ? 0 : paymentValue; const isPaid = costValue > 0 && effectivePayment >= costValue; setStore(current => ({ ...current, outsources: [{ id: uid(), projectId: selectedProject, provider, contact: providerContact, description: description || "Outsourced project work.", cost: costValue, paid: effectivePayment, status: isPaid ? "Completed" : "Assigned", paidAt: isPaid ? today() : undefined, notes: skipPayment ? "Payment deferred until completion." : "" }, ...current.outsources], projects: current.projects.map(item => item.id === selectedProject ? { ...item, outsourced: true, outsourcedTo: provider } : item) })); toast.success(skipPayment ? "Outsourced work added (payment skipped for now)" : "Outsourced work linked to project"); }
+    if (kind === "outsource") {
+      if (!selectedProject || !provider.trim()) return toast.error("Select a project and add a delivery partner.");
+      const effectivePayment = skipPayment ? 0 : paymentValue;
+      const isPaid = costValue > 0 && effectivePayment >= costValue;
+      const remainingCost = Math.max(0, costValue - effectivePayment);
+      const payDateToSave = !isPaid && remainingCost > 0 ? remainingDate : undefined;
+
+      let outsourceNote = "";
+      if (skipPayment) {
+        outsourceNote = `Payment deferred until ${dateLabel(remainingDate)}.${remainingNote ? ` (${remainingNote})` : ""}`;
+      } else if (remainingCost > 0 && remainingDate) {
+        outsourceNote = `Remaining payment (${money(remainingCost)}) scheduled for ${dateLabel(remainingDate)}.${remainingNote ? ` (${remainingNote})` : ""}`;
+      }
+
+      const initialPayments = effectivePayment > 0 ? [
+        {
+          id: uid(),
+          amount: effectivePayment,
+          date: today(),
+          note: isPaid ? "Full upfront payout" : `Upfront partial payment · Remaining ${money(remainingCost)} scheduled for ${dateLabel(remainingDate)}`,
+        }
+      ] : [];
+
+      setStore(current => ({
+        ...current,
+        outsources: [
+          {
+            id: uid(),
+            projectId: selectedProject,
+            provider,
+            contact: providerContact,
+            description: description || "Outsourced project work.",
+            cost: costValue,
+            paid: effectivePayment,
+            status: isPaid ? "Completed" : "Assigned",
+            paidAt: effectivePayment > 0 ? today() : undefined,
+            payDate: payDateToSave,
+            notes: outsourceNote,
+            payments: initialPayments,
+          },
+          ...current.outsources,
+        ],
+        projects: current.projects.map(item => item.id === selectedProject ? { ...item, outsourced: true, outsourcedTo: provider } : item)
+      }));
+      toast.success(
+        skipPayment
+          ? `Outsourced work added (payout scheduled for ${dateLabel(remainingDate)})`
+          : remainingCost > 0 && effectivePayment > 0
+          ? `Outsourced work added with partial payment of ${money(effectivePayment)} (remaining due ${dateLabel(remainingDate)})`
+          : "Outsourced work linked to project"
+      );
+    }
     if (kind === "receivable") { if (!selectedProject) return toast.error("Select a project first."); if (store.receivables.some(item => item.projectId === selectedProject)) return toast.error("This project already has a receivable."); setStore(current => ({ ...current, receivables: [{ id: uid(), projectId: selectedProject, received: 0, dueDate: deadline, status: "Unpaid", notes: "" }, ...current.receivables] })); toast.success("Receivable linked to project"); }
     if (kind === "payment") { const receivable = store.receivables.find(item => item.projectId === selectedProject); if (!selectedProject || paymentValue <= 0) return toast.error("Enter a payment amount first."); setStore(current => ({ ...current, projects: current.projects.map(item => item.id === selectedProject ? { ...item, received: Math.min(item.amount, item.received + paymentValue) } : item), receivables: receivable ? current.receivables.map(item => item.id === receivable.id ? { ...item, received: Math.min((selected?.amount || 0), item.received + paymentValue), status: item.received + paymentValue >= (selected?.amount || 0) ? "Paid" : "Partially Paid" } : item) : [...current.receivables, { id: uid(), projectId: selectedProject, received: paymentValue, dueDate: deadline, status: paymentValue >= (selected?.amount || 0) ? "Paid" : "Partially Paid", notes: "Created from payment recording." }] })); toast.success("Payment recorded"); }
-    if (kind === "credential") { if (!service.trim() || !username.trim() || !password.trim()) return toast.error("Service, username, and password are required."); setStore(current => ({ ...current, credentials: [{ id: uid(), service, projectId: selectedProject, username, password, url, notes: "" }, ...current.credentials] })); toast.success("Credential saved securely"); }
+    if (kind === "credential") {
+      if (!credService.trim()) return toast.error("Service name is required.");
+      const validFields = credFields.filter(f => f.key.trim() || f.value.trim());
+      if (validFields.length === 0) return toast.error("Add at least one key-value field.");
+
+      const userField = validFields.find(f => /user|email|login/i.test(f.key)) || validFields.find(f => !f.isSecret);
+      const passField = validFields.find(f => /pass|secret|token|key/i.test(f.key) || f.isSecret);
+      const urlField = validFields.find(f => /url|link|host|endpoint/i.test(f.key) || f.value.startsWith("http"));
+
+      const legacyUsername = userField ? userField.value : (validFields[0]?.value || "");
+      const legacyPassword = passField ? passField.value : "";
+      const legacyUrl = urlField ? urlField.value : "";
+
+      const clientToSave = credClient.trim() || (selected ? selected.client : undefined);
+
+      if (editingCredential) {
+        setStore(current => ({
+          ...current,
+          credentials: current.credentials.map(c =>
+            c.id === editingCredential.id
+              ? {
+                  ...c,
+                  service: credService,
+                  projectId: credProject,
+                  client: clientToSave,
+                  username: legacyUsername,
+                  password: legacyPassword,
+                  url: legacyUrl,
+                  notes: credNotes,
+                  fields: validFields,
+                }
+              : c
+          ),
+        }));
+        toast.success(`Updated ${credService} under ${clientToSave || "General"}`);
+      } else {
+        const newCred: Credential = {
+          id: uid(),
+          service: credService,
+          projectId: credProject,
+          client: clientToSave,
+          username: legacyUsername,
+          password: legacyPassword,
+          url: legacyUrl,
+          notes: credNotes,
+          fields: validFields,
+        };
+        setStore(current => ({
+          ...current,
+          credentials: [newCred, ...current.credentials],
+        }));
+        toast.success(`Saved ${credService} under ${clientToSave || "General"}`);
+      }
+    }
     if (kind === "script") { if (!scriptName.trim() || !scriptCode.trim()) return toast.error("Add a name and the script content."); setStore(current => ({ ...current, scripts: [{ id: uid(), name: scriptName, category, description: description || "Reusable technical snippet.", code: scriptCode, tags: [category.toLowerCase()], projectId: selectedProject, notes: "" }, ...current.scripts] })); toast.success("Script added to library"); }
     close(); };
   return <div className="drawer-layer"><button className="drawer-scrim" onClick={close} aria-label="Close form" /><aside className="drawer"><div className="drawer-header"><div><div className="eyebrow">Quick add</div><h2>{titles[kind]}</h2><p>{kind === "outsource" || kind === "receivable" || kind === "payment" ? "Project context is carried forward automatically." : "Keep this record focused and easy to revisit."}</p></div><button className="icon-button" onClick={close}><X size={18} /></button></div><div className="drawer-body">
     {kind === "project" && <><Field label="Project name" value={projectName} onChange={setProjectName} placeholder="e.g. Atlas Commerce" required /><Field label="Client name" value={client} onChange={setClient} placeholder="e.g. Northstar Labs" required /><Field label="Client contact" value={contact} onChange={setContact} placeholder="Name · email" /><Field label="Description" value={description} onChange={setDescription} placeholder="What needs to move forward?" textarea /><div className="form-row"><Field label="Project amount (PKR)" value={amount} onChange={setAmount} prefix="₨" type="number" /><SelectField label="Priority" value={priority} onChange={value => setPriority(value as Priority)} options={["Low", "Medium", "High", "Urgent"]} /></div><Field label="Deadline" value={deadline} onChange={setDeadline} type="date" /></>}
     {(kind === "outsource" || kind === "receivable" || kind === "payment") && <><SelectField label="Project" value={selectedProject} onChange={setSelectedProject} options={store.projects.map(item => item.id)} labels={Object.fromEntries(store.projects.map(item => [item.id, `${item.name} · ${item.client}`]))} /><div className="context-preview"><div className="project-logo">{selected?.name.slice(0, 1)}</div><div><strong>{selected?.name || "Select a project"}</strong><span>{selected?.client || "Project context will appear here"}</span></div><Link2 size={14} /></div></>}
-    {kind === "outsource" && <><Field label="Outsourced person / company" value={provider} onChange={setProvider} placeholder="e.g. John Malik" required /><Field label="Contact" value={providerContact} onChange={setProviderContact} placeholder="Email or phone" /><Field label="Work description" value={description} onChange={setDescription} placeholder="What are they taking on?" textarea /><Field label="Outsourcing cost (PKR)" value={cost} onChange={setCost} prefix="₨" type="number" required /><div className="skip-payment-control"><label className="skip-payment-label"><input type="checkbox" checked={skipPayment} onChange={e => { setSkipPayment(e.target.checked); if (e.target.checked) setPayment(""); }} /><div className="skip-payment-info"><strong>Skip payment for now</strong><span>Pay delivery partner later upon project completion</span></div></label></div>{!skipPayment && <Field label="Amount paid upfront (PKR)" value={payment} onChange={setPayment} prefix="₨" type="number" placeholder="0 or initial deposit" />}</>}
+    {kind === "outsource" && <>
+      <Field label="Outsourced person / company" value={provider} onChange={setProvider} placeholder="e.g. John Malik" required />
+      <Field label="Contact" value={providerContact} onChange={setProviderContact} placeholder="Email or phone" />
+      <Field label="Work description" value={description} onChange={setDescription} placeholder="What are they taking on?" textarea />
+      <Field label="Outsourcing cost (PKR)" value={cost} onChange={setCost} prefix="₨" type="number" required />
+      <div className="skip-payment-control">
+        <label className="skip-payment-label">
+          <input
+            type="checkbox"
+            checked={skipPayment}
+            onChange={e => {
+              setSkipPayment(e.target.checked);
+              if (e.target.checked) setPayment("");
+            }}
+          />
+          <div className="skip-payment-info">
+            <strong>Skip payment for now</strong>
+            <span>Pay delivery partner later upon project completion</span>
+          </div>
+        </label>
+      </div>
+      {!skipPayment && <Field label="Amount paid upfront (PKR)" value={payment} onChange={setPayment} prefix="₨" type="number" placeholder="0 or initial deposit" />}
+      {(skipPayment || (cost && evaluateExpression(payment) < evaluateExpression(cost))) && (
+        <div style={{ marginTop: 8, padding: "10px 12px", background: "rgba(245, 158, 11, 0.08)", border: "1px solid rgba(245, 158, 11, 0.2)", borderRadius: 8 }}>
+          <CalendarPicker
+            label={skipPayment ? "When to give payment (scheduled date)" : "When to give remaining payment (date)"}
+            value={remainingDate}
+            onChange={setRemainingDate}
+            required
+          />
+          <div style={{ marginTop: 8 }}>
+            <Field
+              label="Remaining payment milestone / note (optional)"
+              value={remainingNote}
+              onChange={setRemainingNote}
+              placeholder="e.g. Due upon final deliverable"
+            />
+          </div>
+        </div>
+      )}
+    </>}
     {(kind === "receivable" || kind === "payment") && <><Field label={kind === "payment" ? "Payment amount (PKR)" : "Due date"} value={kind === "payment" ? payment : deadline} onChange={value => kind === "payment" ? setPayment(value) : setDeadline(value)} prefix={kind === "payment" ? "₨" : undefined} placeholder={kind === "payment" ? "e.g. =43*277" : undefined} type={kind === "payment" ? "number" : "date"} required />{kind === "receivable" && <div className="amount-preview"><span>Total linked amount</span><strong>{money(selected?.amount || 0)}</strong><small>Auto-populated from project value</small></div>}</>}
-    {kind === "credential" && <><Field label="Service name" value={service} onChange={setService} placeholder="e.g. Northstar staging" required /><SelectField label="Related project" value={selectedProject} onChange={setSelectedProject} options={store.projects.map(item => item.id)} labels={Object.fromEntries(store.projects.map(item => [item.id, item.name]))} /><Field label="Username / email" value={username} onChange={setUsername} placeholder="you@example.com" required /><Field label="Password" value={password} onChange={setPassword} placeholder="Hidden after save" type="password" required /><Field label="URL" value={url} onChange={setUrl} placeholder="https://" /><Field label="Notes" value={description} onChange={setDescription} placeholder="Optional context" textarea /></>}
+    {kind === "credential" && (
+      <>
+        <div style={{ marginBottom: "14px" }}>
+          <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "var(--ink)", marginBottom: "6px" }}>
+            Client name <span className="required">*</span>
+          </label>
+          <input
+            list="known-clients-list"
+            value={credClient}
+            onChange={e => setCredClient(e.target.value)}
+            placeholder="e.g. Northstar Labs or General / Shared"
+            style={{
+              width: "100%",
+              height: "38px",
+              border: "1px solid var(--line)",
+              borderRadius: "6px",
+              padding: "0 11px",
+              fontSize: "12px",
+              color: "var(--ink)",
+              background: "#fff",
+            }}
+            required
+          />
+          <datalist id="known-clients-list">
+            {existingClients.map(cl => (
+              <option key={cl} value={cl} />
+            ))}
+          </datalist>
+          <small style={{ color: "var(--muted)", fontSize: "10px", marginTop: "4px", display: "block" }}>
+            Credentials and dynamic keys will be grouped under this client in Tools.
+          </small>
+        </div>
+
+        <Field
+          label="Service / Tool name"
+          value={credService}
+          onChange={setCredService}
+          placeholder="e.g. Stripe Gateway, AWS Production, Supabase Staging"
+          required
+        />
+
+        <SelectField
+          label="Related project (optional)"
+          value={credProject}
+          onChange={value => {
+            setCredProject(value);
+            const proj = store.projects.find(p => p.id === value);
+            if (proj?.client && (!credClient || existingClients.includes(credClient))) {
+              setCredClient(proj.client);
+            }
+          }}
+          options={["", ...store.projects.map(item => item.id)]}
+          labels={Object.fromEntries([["", "No linked project / Shared"], ...store.projects.map(item => [item.id, `${item.name} (${item.client})`])])}
+        />
+
+        <div className="drawer-fields-section">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+            <div>
+              <strong style={{ fontSize: "12px", color: "var(--ink)" }}>Dynamic Key-Value Fields</strong>
+              <span style={{ display: "block", fontSize: "10px", color: "var(--muted)" }}>
+                Add multiple keys, secrets, tokens, endpoints, or custom config under this client.
+              </span>
+            </div>
+            <button
+              type="button"
+              className="secondary-button"
+              style={{ padding: "0 9px", minHeight: "28px", fontSize: "11px" }}
+              onClick={() => setCredFields(curr => [...curr, { id: uid(), key: "", value: "", isSecret: false }])}
+            >
+              <Plus size={13} /> Add field
+            </button>
+          </div>
+
+          <div style={{ display: "flex", gap: "5px", flexWrap: "wrap", marginBottom: "12px" }}>
+            <span style={{ fontSize: "10px", color: "var(--muted)", alignSelf: "center" }}>Quick presets:</span>
+            <button
+              type="button"
+              className="quick-key-pill"
+              onClick={() => setCredFields(curr => [
+                ...curr,
+                { id: uid(), key: "API Key", value: "", isSecret: false },
+                { id: uid(), key: "API Secret", value: "", isSecret: true },
+                { id: uid(), key: "API Endpoint", value: "https://", isSecret: false },
+              ])}
+            >
+              + API Preset
+            </button>
+            <button
+              type="button"
+              className="quick-key-pill"
+              onClick={() => setCredFields(curr => [
+                ...curr,
+                { id: uid(), key: "Database Host", value: "", isSecret: false },
+                { id: uid(), key: "DB User", value: "", isSecret: false },
+                { id: uid(), key: "DB Password", value: "", isSecret: true },
+                { id: uid(), key: "Connection String", value: "", isSecret: true },
+              ])}
+            >
+              + DB Preset
+            </button>
+            <button
+              type="button"
+              className="quick-key-pill"
+              onClick={() => setCredFields(curr => [
+                ...curr,
+                { id: uid(), key: "Username / Email", value: "", isSecret: false },
+                { id: uid(), key: "Password", value: "", isSecret: true },
+                { id: uid(), key: "Portal URL", value: "https://", isSecret: false },
+              ])}
+            >
+              + Login Preset
+            </button>
+          </div>
+
+          <div style={{ display: "grid", gap: "8px" }}>
+            {credFields.map((field, idx) => (
+              <div key={field.id} className="drawer-field-row">
+                <input
+                  type="text"
+                  placeholder="Key (e.g. API Key)"
+                  value={field.key}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setCredFields(curr => curr.map((f, i) => i === idx ? { ...f, key: val } : f));
+                  }}
+                  style={{
+                    height: "36px",
+                    border: "1px solid var(--line)",
+                    borderRadius: "6px",
+                    padding: "0 10px",
+                    fontSize: "12px"
+                  }}
+                />
+                <input
+                  type={field.isSecret ? "password" : "text"}
+                  placeholder="Value or secret"
+                  value={field.value}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setCredFields(curr => curr.map((f, i) => i === idx ? { ...f, value: val } : f));
+                  }}
+                  style={{
+                    height: "36px",
+                    border: "1px solid var(--line)",
+                    borderRadius: "6px",
+                    padding: "0 10px",
+                    fontSize: "12px",
+                    fontFamily: field.isSecret ? "monospace" : "inherit"
+                  }}
+                />
+                <button
+                  type="button"
+                  className={`mini-action-btn ${field.isSecret ? "active-secret" : ""}`}
+                  title={field.isSecret ? "Field is masked as Secret" : "Mark as Secret"}
+                  style={{
+                    height: "36px",
+                    padding: "0 8px",
+                    width: "auto",
+                    fontSize: "11px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    border: "1px solid var(--line)",
+                    background: field.isSecret ? "#fff7ed" : "#fff",
+                    color: field.isSecret ? "#ea580c" : "var(--muted)",
+                    borderRadius: "6px",
+                    cursor: "pointer"
+                  }}
+                  onClick={() => {
+                    setCredFields(curr => curr.map((f, i) => i === idx ? { ...f, isSecret: !f.isSecret } : f));
+                  }}
+                >
+                  {field.isSecret ? <EyeOff size={13} /> : <Eye size={13} />}
+                  <span>{field.isSecret ? "Secret" : "Plain"}</span>
+                </button>
+                <button
+                  type="button"
+                  className="mini-action-btn delete"
+                  style={{ height: "36px", width: "32px", border: "1px solid var(--line)", borderRadius: "6px" }}
+                  title="Remove field"
+                  onClick={() => {
+                    setCredFields(curr => curr.filter((_, i) => i !== idx));
+                  }}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <Field
+          label="Notes / Instructions"
+          value={credNotes}
+          onChange={setCredNotes}
+          placeholder="Optional context, IP restrictions, rotation schedule"
+          textarea
+        />
+      </>
+    )}
     {kind === "script" && <><Field label="Script name" value={scriptName} onChange={setScriptName} placeholder="e.g. Tail logs safely" required /><div className="form-row"><SelectField label="Category" value={category} onChange={setCategory} options={["Linux", "Docker", "AWS", "Python", "DevOps", "Database", "Deployment", "AI", "Automation", "n8n", "Other"]} /><SelectField label="Related project" value={selectedProject} onChange={setSelectedProject} options={["", ...store.projects.map(item => item.id)]} labels={{ "": "No project" }} /></div><Field label="Description" value={description} onChange={setDescription} placeholder="What is this useful for?" textarea /><Field label="Script / code" value={scriptCode} onChange={setScriptCode} placeholder="Paste a command or snippet" textarea code /></>}
-  </div><div className="drawer-footer"><button className="secondary-button" onClick={close}>Cancel</button><button className="primary-button" onClick={save}>{kind === "payment" ? "Record payment" : "Save record"} <ArrowRight size={15} /></button></div></aside></div>;
+  </div><div className="drawer-footer"><button className="secondary-button" onClick={close}>Cancel</button><button className="primary-button" onClick={save}>{kind === "payment" ? "Record payment" : editingCredential ? "Update record" : "Save record"} <ArrowRight size={15} /></button></div></aside></div>;
 }
 function Field({ label, value, onChange, placeholder, type = "text", prefix, textarea, required, code }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; type?: string; prefix?: string; textarea?: boolean; required?: boolean; code?: boolean }) {
   if (type === "date") {
@@ -2124,12 +3187,21 @@ function SelectField({ label, value, onChange, options, labels }: { label: strin
 function Worknest() {
   const [location, navigate] = useLocation();
   const [store, setStore] = useStore();
-  const [drawer, setDrawer] = useState<{ kind: DrawerKind; context?: Project } | null>(null);
+  const [drawer, setDrawer] = useState<{
+    kind: DrawerKind;
+    context?: Project;
+    editingCredential?: Credential;
+    defaultClient?: string;
+  } | null>(null);
   const [completingProject, setCompletingProject] = useState<{ project: Project; outsource?: Outsource; initialMode?: "full" | "partial" | "schedule" } | null>(null);
   const activeProjectId = location.match(/^\/projects\/([^/]+)/)?.[1];
   const activeProject = store.projects.find(project => project.id === activeProjectId);
   const active = location.startsWith("/outsourced") ? "outsourced" : location.startsWith("/receivables") ? "receivables" : location.startsWith("/tools") ? "tools" : "projects";
-  const openDrawer = (kind: DrawerKind, context?: Project) => kind && setDrawer({ kind, context });
+  const openDrawer = (
+    kind: DrawerKind,
+    context?: Project,
+    extra?: { editingCredential?: Credential; defaultClient?: string }
+  ) => kind && setDrawer({ kind, context, ...extra });
 
   const handleOpenPayment = (
     project: Project,
@@ -2241,6 +3313,8 @@ function Worknest() {
     outsource: Outsource,
     partialAmount: number,
     paidDate?: string,
+    remainingPayDate?: string,
+    remainingNote?: string,
     completeProject = false
   ) => {
     if (partialAmount <= 0) {
@@ -2251,6 +3325,21 @@ function Worknest() {
     const newPaid = Math.min(outsource.cost, outsource.paid + partialAmount);
     const remainingBalance = Math.max(0, outsource.cost - newPaid);
     const isNowFull = newPaid >= outsource.cost;
+
+    let paymentNote = "Partial payment";
+    if (isNowFull) {
+      paymentNote = "Final partial payment (Paid in full)";
+    } else if (remainingPayDate) {
+      paymentNote = `Partial payment · Remaining ${money(remainingBalance)} scheduled for ${dateLabel(remainingPayDate)}${remainingNote ? ` (${remainingNote})` : ""}`;
+    }
+
+    const updatedPayDate = isNowFull ? undefined : (remainingPayDate || outsource.payDate);
+
+    let updatedNotes = outsource.notes || "";
+    if (!isNowFull && remainingPayDate) {
+      const scheduleInfo = `Remaining ${money(remainingBalance)} scheduled for ${remainingPayDate}${remainingNote ? ` (${remainingNote})` : ""}`;
+      updatedNotes = updatedNotes ? `${updatedNotes} | ${scheduleInfo}` : scheduleInfo;
+    }
 
     setStore(current => ({
       ...current,
@@ -2264,21 +3353,36 @@ function Worknest() {
               paid: newPaid,
               status: isNowFull ? "Completed" : o.status,
               paidAt: completedDate,
+              payDate: updatedPayDate,
+              notes: updatedNotes,
               payments: [
                 ...(o.payments || []),
-                { id: uid(), amount: partialAmount, date: completedDate, note: "Partial payment" },
+                { id: uid(), amount: partialAmount, date: completedDate, note: paymentNote },
               ],
             }
           : o
       ),
     }));
-    toast.success(
-      `Recorded partial payment of ${money(partialAmount)} to ${outsource.provider} on ${dateLabel(completedDate)}! Remaining balance: ${money(remainingBalance)}.`
-    );
+
+    if (isNowFull) {
+      toast.success(
+        `✓ Paid ${money(partialAmount)} to ${outsource.provider} on ${dateLabel(completedDate)}! Payout completed in full.`
+      );
+    } else if (remainingPayDate) {
+      toast.success(
+        `Recorded partial payment of ${money(partialAmount)} to ${outsource.provider} on ${dateLabel(completedDate)}! Remaining ${money(remainingBalance)} scheduled for ${dateLabel(remainingPayDate)}.`
+      );
+    } else {
+      toast.success(
+        `Recorded partial payment of ${money(partialAmount)} to ${outsource.provider} on ${dateLabel(completedDate)}! Remaining balance: ${money(remainingBalance)}.`
+      );
+    }
     setCompletingProject(null);
   };
 
   const handleSchedulePay = (project: Project, outsource: Outsource, payDate: string, completeProject = true) => {
+    const isPartial = outsource.paid > 0 && outsource.paid < outsource.cost;
+    const remainingBalance = Math.max(0, outsource.cost - outsource.paid);
     setStore(current => ({
       ...current,
       projects: current.projects.map(p =>
@@ -2289,12 +3393,16 @@ function Worknest() {
           ? {
               ...o,
               payDate,
-              notes: (o.notes ? `${o.notes} | ` : "") + `Payout scheduled for ${payDate}`,
+              notes: (o.notes ? `${o.notes} | ` : "") + `${isPartial ? `Remaining ${money(remainingBalance)} payout` : "Payout"} scheduled for ${payDate}`,
             }
           : o
       ),
     }));
-    toast.success(`Project “${project.name}” completed! Payout to ${outsource.provider} scheduled for ${dateLabel(payDate)}.`);
+    toast.success(
+      isPartial
+        ? `Remaining payout of ${money(remainingBalance)} to ${outsource.provider} scheduled for ${dateLabel(payDate)}!`
+        : `Project “${project.name}” completed! Payout to ${outsource.provider} scheduled for ${dateLabel(payDate)}.`
+    );
     setCompletingProject(null);
   };
 
@@ -2381,6 +3489,8 @@ function Worknest() {
         <Drawer
           kind={drawer.kind}
           context={drawer.context}
+          editingCredential={drawer.editingCredential}
+          defaultClient={drawer.defaultClient}
           store={store}
           setStore={setStore}
           close={() => setDrawer(null)}

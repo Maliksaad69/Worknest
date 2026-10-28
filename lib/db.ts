@@ -28,6 +28,7 @@ import type {
   OutsourcePayment,
   Receivable,
   Credential,
+  CredentialField,
   Script,
   Store,
   ProjectStatus,
@@ -316,19 +317,78 @@ function assembleReceivables(receivableRows: Array<Record<string, unknown>>): Re
   }));
 }
 
+function serializeCredentialNotes(c: { notes?: string; client?: string; fields?: CredentialField[] }): string {
+  const fields = Array.isArray(c.fields) ? c.fields : [];
+  const client = typeof c.client === "string" ? c.client : "";
+  if (fields.length > 0 || client) {
+    return JSON.stringify({
+      rawNotes: c.notes || "",
+      client,
+      fields,
+    });
+  }
+  return c.notes || "";
+}
+
 /**
- * Normalizes credentials.
+ * Normalizes credentials with dynamic key-value fields and client grouping support.
  */
 function assembleCredentials(credentialRows: Array<Record<string, unknown>>): Credential[] {
-  return credentialRows.map((c) => ({
-    id: String(c.id),
-    service: String(c.service || ""),
-    projectId: String(c.projectId || ""),
-    username: String(c.username || ""),
-    password: String(c.password || ""),
-    url: String(c.url || ""),
-    notes: String(c.notes || ""),
-  }));
+  return credentialRows.map((c) => {
+    let client = typeof c.client === "string" && c.client.trim() ? c.client.trim() : undefined;
+    let fields: CredentialField[] = Array.isArray(c.fields)
+      ? (c.fields as CredentialField[])
+      : [];
+    let rawNotes = String(c.notes || "");
+
+    if (rawNotes.startsWith("{") && rawNotes.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(rawNotes);
+        if (parsed && typeof parsed === "object") {
+          if (!client && typeof parsed.client === "string" && parsed.client.trim()) {
+            client = parsed.client.trim();
+          }
+          if (fields.length === 0 && Array.isArray(parsed.fields)) {
+            fields = parsed.fields;
+          }
+          if (typeof parsed.rawNotes === "string") {
+            rawNotes = parsed.rawNotes;
+          }
+        }
+      } catch {
+        // Keep rawNotes as is if JSON parsing fails
+      }
+    }
+
+    const username = String(c.username || "");
+    const password = String(c.password || "");
+    const url = String(c.url || "");
+
+    // Backward compatibility: synthesize dynamic fields if no custom fields were stored
+    if (fields.length === 0) {
+      if (username) {
+        fields.push({ id: "f-user", key: "Username / Email", value: username, isSecret: false });
+      }
+      if (password) {
+        fields.push({ id: "f-pass", key: "Password", value: password, isSecret: true });
+      }
+      if (url) {
+        fields.push({ id: "f-url", key: "URL", value: url, isSecret: false });
+      }
+    }
+
+    return {
+      id: String(c.id),
+      service: String(c.service || ""),
+      projectId: String(c.projectId || ""),
+      client,
+      username,
+      password,
+      url,
+      notes: rawNotes,
+      fields,
+    };
+  });
 }
 
 /**
@@ -701,7 +761,7 @@ export async function saveWorkspaceState(raw: unknown): Promise<{ success: boole
             username: String(c.username || ""),
             password: String(c.password || ""),
             url: String(c.url || ""),
-            notes: String(c.notes || ""),
+            notes: serializeCredentialNotes(c as Credential),
             updatedAt: new Date(),
           };
           await db
@@ -956,7 +1016,7 @@ export async function saveWorkspaceState(raw: unknown): Promise<{ success: boole
           username: String(c.username || ""),
           password: String(c.password || ""),
           url: String(c.url || ""),
-          notes: String(c.notes || ""),
+          notes: serializeCredentialNotes(c as Credential),
           updatedAt: new Date().toISOString(),
         }));
         await supabase.from("credentials").upsert(credentialRows, { onConflict: "id" });
@@ -1704,6 +1764,7 @@ export async function addOutsourcePayment(input: {
   amount: number;
   date?: string;
   note?: string;
+  remainingPayDate?: string;
 }): Promise<OutsourcePayment> {
   const payment: OutsourcePayment = {
     id: input.id || uid(),
@@ -1720,6 +1781,9 @@ export async function addOutsourcePayment(input: {
     if (outsource.paid >= outsource.cost && outsource.cost > 0) {
       outsource.status = "Completed";
       outsource.paidAt = payment.date;
+      outsource.payDate = undefined;
+    } else if (input.remainingPayDate) {
+      outsource.payDate = input.remainingPayDate;
     }
   }
 
@@ -1737,7 +1801,12 @@ export async function addOutsourcePayment(input: {
       if (outsource) {
         await db
           .update(outsources)
-          .set({ paid: outsource.paid, status: outsource.status, paidAt: outsource.paidAt ?? null })
+          .set({
+            paid: outsource.paid,
+            status: outsource.status,
+            paidAt: outsource.paidAt ?? null,
+            payDate: outsource.payDate ?? null,
+          })
           .where(eq(outsources.id, input.outsourceId));
       }
     } catch (e) {
@@ -1760,7 +1829,12 @@ export async function addOutsourcePayment(input: {
         if (outsource) {
           await supabase
             .from("outsources")
-            .update({ paid: outsource.paid, status: outsource.status, paidAt: outsource.paidAt ?? null })
+            .update({
+              paid: outsource.paid,
+              status: outsource.status,
+              paidAt: outsource.paidAt ?? null,
+              payDate: outsource.payDate ?? null,
+            })
             .eq("id", input.outsourceId);
         }
       } else {
@@ -2074,19 +2148,50 @@ export async function createCredential(input: {
   id?: string;
   service: string;
   projectId?: string;
-  username: string;
-  password: string;
+  client?: string;
+  username?: string;
+  password?: string;
   url?: string;
   notes?: string;
+  fields?: CredentialField[];
 }): Promise<Credential> {
+  const fields: CredentialField[] = Array.isArray(input.fields) ? [...input.fields] : [];
+
+  // Synthesize legacy fields if not explicitly passed
+  let username = input.username;
+  let password = input.password;
+  let url = input.url;
+
+  if (username === undefined || username === null) {
+    const userField = fields.find((f) => /user|email|login/i.test(f.key)) || fields.find((f) => !f.isSecret);
+    username = userField ? userField.value : fields[0]?.value || "";
+  }
+  if (password === undefined || password === null) {
+    const passField = fields.find((f) => /pass|secret|token|key/i.test(f.key) || f.isSecret);
+    password = passField ? passField.value : "";
+  }
+  if (url === undefined || url === null) {
+    const urlField = fields.find((f) => /url|link|host|endpoint/i.test(f.key) || f.value.startsWith("http"));
+    url = urlField ? urlField.value : "";
+  }
+
+  // If fields was empty but username/password/url were provided, populate fields
+  if (fields.length === 0) {
+    if (username) fields.push({ id: "f-user", key: "Username / Email", value: username, isSecret: false });
+    if (password) fields.push({ id: "f-pass", key: "Password", value: password, isSecret: true });
+    if (url) fields.push({ id: "f-url", key: "URL", value: url, isSecret: false });
+  }
+
   const newCredential: Credential = {
     id: input.id || uid(),
     service: input.service,
     projectId: input.projectId || "",
-    username: input.username,
-    password: input.password,
-    url: input.url || "",
+    client: input.client?.trim() || undefined,
+    username,
+    password,
+    url,
     notes: input.notes || "",
+    fields,
   };
 
   _inMemoryState.credentials = [
@@ -2104,7 +2209,7 @@ export async function createCredential(input: {
         username: newCredential.username,
         password: newCredential.password,
         url: newCredential.url,
-        notes: newCredential.notes,
+        notes: serializeCredentialNotes(newCredential),
       });
       return newCredential;
     } catch (e) {
@@ -2123,7 +2228,7 @@ export async function createCredential(input: {
           username: newCredential.username,
           password: newCredential.password,
           url: newCredential.url,
-          notes: newCredential.notes,
+          notes: serializeCredentialNotes(newCredential),
         });
       } else {
         await saveWorkspaceState(_inMemoryState);
@@ -2149,6 +2254,8 @@ export async function updateCredential(
     };
   }
 
+  const merged = _inMemoryState.credentials.find((c) => c.id === credentialId);
+
   const db = getDb();
   if (db) {
     try {
@@ -2158,7 +2265,11 @@ export async function updateCredential(
       if (update.username !== undefined) updateData.username = update.username;
       if (update.password !== undefined) updateData.password = update.password;
       if (update.url !== undefined) updateData.url = update.url;
-      if (update.notes !== undefined) updateData.notes = update.notes;
+      if (merged) {
+        updateData.notes = serializeCredentialNotes(merged);
+      } else if (update.notes !== undefined) {
+        updateData.notes = update.notes;
+      }
 
       await db.update(credentials).set(updateData).where(eq(credentials.id, credentialId));
     } catch (e) {
@@ -2176,7 +2287,11 @@ export async function updateCredential(
         if (update.username !== undefined) updateData.username = update.username;
         if (update.password !== undefined) updateData.password = update.password;
         if (update.url !== undefined) updateData.url = update.url;
-        if (update.notes !== undefined) updateData.notes = update.notes;
+        if (merged) {
+          updateData.notes = serializeCredentialNotes(merged);
+        } else if (update.notes !== undefined) {
+          updateData.notes = update.notes;
+        }
 
         await supabase.from("credentials").update(updateData).eq("id", credentialId);
       } else {

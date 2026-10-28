@@ -1373,6 +1373,25 @@ body {
   color: #ffffff;
 }
 
+/* Remaining Schedule Card for Partial Payments */
+.remaining-schedule-card {
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.remaining-schedule-card .schedule-pay-title {
+  color: #fbbf24;
+}
+.remaining-schedule-card .quick-date-chip.active {
+  background: #d97706;
+  border-color: #f59e0b;
+  color: #ffffff;
+}
+
 /* Payment Breakdown Card */
 .payment-breakdown-card {
   background: rgba(0, 0, 0, 0.3);
@@ -1985,4 +2004,372 @@ select option:focus {
   background-color: #111622 !important;
   color: #ffffff !important;
   border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+/* =========================================================================
+   Client-Grouped Tools & Dynamic Key-Value Fields
+   ========================================================================= */
+
+.client-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 4px 0 10px;
+  margin-bottom: 16px;
+  scrollbar-width: thin;
+}
+
+.client-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--muted);
+  border-radius: 99px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.client-chip:hover {
+  border-color: #cbd5e1;
+  color: var(--ink);
+}
+
+.client-chip.active {
+  background: var(--blue, #2563eb);
+  color: #fff;
+  border-color: var(--blue, #2563eb);
+}
+
+.client-chip-count {
+  background: rgba(0, 0, 0, 0.08);
+  border-radius: 99px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.client-chip.active .client-chip-count {
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+
+.client-groups-container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.client-group-card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(20, 28, 40, 0.03);
+}
+
+.client-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+  background: rgba(248, 250, 252, 0.7);
+  border-bottom: 1px solid var(--line);
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.client-group-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.client-group-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: #eef2ff;
+  color: var(--blue, #2563eb);
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 13px;
+  flex-shrink: 0;
+  border: 1px solid rgba(37, 99, 235, 0.15);
+}
+
+.client-group-info h3 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0;
+}
+
+.client-group-info span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.client-group-content {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tool-credential-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 14px 16px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.tool-credential-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.04);
+}
+
+.tool-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.tool-service-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.tool-service-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #475569;
+  display: grid;
+  place-items: center;
+}
+
+.tool-service-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.tool-project-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--blue, #2563eb);
+  background: #eff6ff;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(37, 99, 235, 0.15);
+  cursor: pointer;
+}
+
+.tool-project-badge:hover {
+  background: #dbeafe;
+}
+
+.tool-notes-text {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 8px 0 4px;
+  line-height: 1.45;
+}
+
+/* Dynamic Key-Value Grid */
+.dynamic-fields-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #f1f3f5;
+}
+
+.dynamic-field-card {
+  border: 1px solid var(--line);
+  background: #f8fafc;
+  border-radius: 7px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  transition: all 0.15s ease;
+}
+
+.dynamic-field-card:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+.field-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.field-key-name {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field-secret-indicator {
+  font-size: 9px;
+  font-weight: 600;
+  color: #ea580c;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 4px;
+  padding: 1px 4px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.field-value-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+
+.field-value-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  font-family: inherit;
+}
+
+.field-value-masked {
+  font-family: 'DM Mono', monospace;
+  letter-spacing: 0.12em;
+  color: #64748b;
+}
+
+.field-button-group {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.mini-action-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: none;
+}
+
+.mini-action-btn:hover {
+  background: #fff;
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.mini-action-btn.delete:hover {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #dc2626;
+}
+
+/* Inline Add Field Box */
+.inline-add-field-card {
+  margin-top: 12px;
+  padding: 12px;
+  background: #f8faff;
+  border: 1px dashed #93c5fd;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.inline-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+@media (max-width: 640px) {
+  .inline-form-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.quick-keys-suggestions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 10px;
+}
+
+.quick-key-pill {
+  border: 1px solid #dbeafe;
+  background: #fff;
+  color: #1d4ed8;
+  border-radius: 99px;
+  padding: 2px 8px;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.quick-key-pill:hover {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+/* Drawer Dynamic Fields Builder */
+.drawer-fields-section {
+  border-top: 1px solid var(--line);
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.drawer-field-row {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+@media (max-width: 640px) {
+  .drawer-field-row {
+    grid-template-columns: 1fr 1fr;
+  }
 }

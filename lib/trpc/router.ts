@@ -289,6 +289,7 @@ export const appRouter = router({
           amount: z.number().positive("Payment amount must be greater than 0"),
           date: z.string().optional(),
           note: z.string().optional(),
+          remainingPayDate: z.string().optional(),
         })
       )
       .mutation(async ({ input }) => {
@@ -371,10 +372,21 @@ export const appRouter = router({
           id: z.string().optional(),
           service: z.string().min(1, "Service name is required"),
           projectId: z.string().optional(),
-          username: z.string().min(1, "Username is required"),
-          password: z.string().min(1, "Password is required"),
+          client: z.string().optional(),
+          username: z.string().optional().default(""),
+          password: z.string().optional().default(""),
           url: z.string().default(""),
           notes: z.string().default(""),
+          fields: z
+            .array(
+              z.object({
+                id: z.string().optional(),
+                key: z.string(),
+                value: z.string(),
+                isSecret: z.boolean().optional(),
+              })
+            )
+            .optional(),
         })
       )
       .mutation(async ({ input }) => {
@@ -386,10 +398,21 @@ export const appRouter = router({
           id: z.string(),
           service: z.string().optional(),
           projectId: z.string().optional(),
+          client: z.string().optional(),
           username: z.string().optional(),
           password: z.string().optional(),
           url: z.string().optional(),
           notes: z.string().optional(),
+          fields: z
+            .array(
+              z.object({
+                id: z.string().optional(),
+                key: z.string(),
+                value: z.string(),
+                isSecret: z.boolean().optional(),
+              })
+            )
+            .optional(),
         })
       )
       .mutation(async ({ input }) => {
